@@ -47,8 +47,8 @@ def substitute_tokens(text: str, params: dict) -> str:
 def build_console_url(account_id: str, region: str, partition: str, domain: str, resource_kind: str, resource_id: str) -> str:
     """Build the partition/domain-correct QuickSight console URL for a resource.
 
-    Used by create-agent to print the agent console URL (Req 6.14) with the
-    partition and domain derived from the caller identity (Req 17.3).
+    Used by create-agent to print the agent console URL with the
+    partition and domain derived from the caller identity.
 
     :param account_id: AWS account id (used for account-scoped gen-AI resource paths)
     :param region: AWS region (e.g. ``us-east-1``, ``cn-north-1``)
@@ -70,7 +70,7 @@ def build_console_url(account_id: str, region: str, partition: str, domain: str,
     return f'https://{region}.quicksight.{domain}/{path}'
 
 
-# Official Agent API caps enforced by validate_caps (Req 10.1-10.7)
+# Official Agent API caps enforced by validate_caps
 MAX_STARTER_PROMPTS = 3
 MAX_STARTER_PROMPT_LEN = 100
 MAX_WELCOME_MESSAGE_LEN = 300
@@ -80,10 +80,10 @@ MAX_PERSONA_FIELD_LEN = 350000
 MAX_SPACES = 10
 MAX_ACTION_CONNECTORS = 10
 
-# The five Persona fields required by the Agent API (Req 10.6)
+# The five Persona fields required by the Agent API
 PERSONA_FIELDS = ('identity', 'customInstructions', 'tone', 'outputStyle', 'responseLength')
 
-# Manifest fields that must be present for create-agent to proceed (Req 10.5)
+# Manifest fields that must be present for create-agent to proceed
 REQUIRED_MANIFEST_FIELDS = ('name', 'agentId', 'persona')
 
 
@@ -92,7 +92,7 @@ def validate_caps(manifest: dict) -> None:
 
     Called by create-agent BEFORE any CreateAgent/UpdateAgent call so that cap
     violations surface as clear, actionable errors instead of opaque API
-    rejections (Req 10.1-10.7). Every error names the offending field.
+    rejections. Every error names the offending field.
 
     Expected manifest shape (see the agent bundle data model in the design)::
 
@@ -120,19 +120,19 @@ def validate_caps(manifest: dict) -> None:
     if not isinstance(manifest, dict):
         raise CidError('Agent manifest must be a mapping, got {type_name}.'.format(type_name=type(manifest).__name__))
 
-    # Required fields (Req 10.5)
+    # Required fields
     for field in REQUIRED_MANIFEST_FIELDS:
         if manifest.get(field) is None:
             raise CidError(f'Agent manifest is missing the required field {field!r}.')
 
-    # Agent Name: non-empty, not whitespace-only, <=50 chars (Req 10.4)
+    # Agent Name: non-empty, not whitespace-only, <=50 chars
     name = str(manifest['name'])
     if not name.strip():
         raise CidError("Agent 'name' must not be empty or whitespace-only.")
     if len(name) > MAX_NAME_LEN:
         raise CidError(f"Agent 'name' exceeds {MAX_NAME_LEN} characters (got {len(name)}).")
 
-    # Starter prompts: at most 3, each <=100 chars (Req 10.1, 10.2)
+    # Starter prompts: at most 3, each <=100 chars
     starter_prompts = manifest.get('starterPrompts') or []
     if len(starter_prompts) > MAX_STARTER_PROMPTS:
         raise CidError(f"'starterPrompts' allows at most {MAX_STARTER_PROMPTS} prompts (got {len(starter_prompts)}).")
@@ -142,14 +142,14 @@ def validate_caps(manifest: dict) -> None:
                 f"'starterPrompts[{index}]' exceeds {MAX_STARTER_PROMPT_LEN} characters (got {len(str(prompt))})."
             )
 
-    # Welcome message: <=300 chars (Req 10.3)
+    # Welcome message: <=300 chars
     welcome_message = manifest.get('welcomeMessage')
     if welcome_message is not None and len(str(welcome_message)) > MAX_WELCOME_MESSAGE_LEN:
         raise CidError(
             f"'welcomeMessage' exceeds {MAX_WELCOME_MESSAGE_LEN} characters (got {len(str(welcome_message))})."
         )
 
-    # Persona: all 5 fields present, each 5-350000 chars (Req 10.5, 10.6)
+    # Persona: all 5 fields present, each 5-350000 chars
     persona = manifest['persona']
     if not isinstance(persona, dict):
         raise CidError("Agent manifest field 'persona' must be a mapping of the 5 persona fields.")
@@ -164,7 +164,7 @@ def validate_caps(manifest: dict) -> None:
                 f'{MAX_PERSONA_FIELD_LEN} characters (got {length}).'
             )
 
-    # Attached Spaces / action connectors: at most 10 each (Req 10.7)
+    # Attached Spaces / action connectors: at most 10 each
     depends_on = manifest.get('dependsOn') or {}
     spaces = depends_on.get('spaces') or []
     if len(spaces) > MAX_SPACES:
@@ -180,7 +180,7 @@ def validate_caps(manifest: dict) -> None:
 def classify_dependencies(required: list, optional: list, present_keys) -> dict:
     """Classify dependency dashboard/dataset keys by deployment presence.
 
-    Pure, deploy-free classification used by create-agent (Req 8.1, 8.4, 8.5, 8.6):
+    Pure, deploy-free classification used by create-agent:
     the handler pre-flights the read-only ``ListDashboards`` call, builds the set of
     present catalog keys, and this function partitions the declared dependencies. The
     handler then decides: zero present -> guidance error; >=1 present -> proceed with
@@ -248,7 +248,7 @@ def _normalize_persona(persona: dict) -> dict:
 
 
 def persona_differs(desired: dict, deployed: dict) -> bool:
-    """Return True if the desired persona differs from the deployed persona (Req 7.3).
+    """Return True if the desired persona differs from the deployed persona.
 
     Compares ONLY the five persona fields (``Identity``, ``CustomInstructions``,
     ``Tone``, ``OutputStyle``, ``ResponseLength``) and EXCLUDES the server-generated
@@ -267,7 +267,7 @@ def persona_differs(desired: dict, deployed: dict) -> bool:
 
 
 def compute_space_delta(desired, current) -> tuple:
-    """Compute the add/remove delta for Space or action-connector associations (Req 7.4).
+    """Compute the add/remove delta for Space or action-connector associations.
 
     Used by the Agent update path to send delta-based add/remove lists instead of a
     full replacement: applying ``(to_add, to_remove)`` to ``current`` yields exactly
@@ -285,7 +285,7 @@ def compute_space_delta(desired, current) -> tuple:
 def compute_space_additions(current_arns, desired_arns) -> set:
     """Compute the additive, de-duplicated set of resource ARNs to add to a Space.
 
-    Space resource updates are strictly additive (Req 6.7, 9.2, 9.4): only resources
+    Space resource updates are strictly additive: only resources
     not already in the Space are added, de-duplicated by ARN, and nothing is removed
     here (removal is the separate, opt-in :func:`compute_stale_removals`).
 
@@ -299,7 +299,7 @@ def compute_space_additions(current_arns, desired_arns) -> set:
 
 
 def compute_stale_removals(space_arns, referenced_arns, managed_arns, remove_stale) -> set:
-    """Compute the opt-in, scoped set of stale Space resources to remove (Req 9.5, 12.6).
+    """Compute the opt-in, scoped set of stale Space resources to remove.
 
     Removal is opt-in (``--cleanup-space``) and scoped: only resources
     that are CID-managed AND no longer referenced by any agent's dependencies AND
@@ -318,7 +318,7 @@ def compute_stale_removals(space_arns, referenced_arns, managed_arns, remove_sta
     return (set(space_arns or ()) & set(managed_arns or ())) - set(referenced_arns or ())
 
 
-# CID_Managed provenance (Req 13.4): dual mechanism.
+# CID_Managed provenance: dual mechanism.
 # (a) resource tag written via TagResource (tolerated failure), and
 # (b) marker string embedded in the resource Description — the existing
 #     'Created by Cloud Intelligence Dashboards' convention that
@@ -329,7 +329,7 @@ CID_MANAGED_MARKER = 'Created by Cloud Intelligence Dashboards'
 
 
 def is_cid_managed(tags, description) -> bool:
-    """Dual-mechanism CID_Managed provenance detection (Req 13.4, 12.7, 13.1, 13.2).
+    """Dual-mechanism CID_Managed provenance detection.
 
     A resource is CID-managed when EITHER the CID provenance tag
     (:data:`CID_PROVENANCE_TAG_KEY`) is present in its tags OR its description contains
@@ -355,7 +355,7 @@ def is_cid_managed(tags, description) -> bool:
     return bool(description) and CID_MANAGED_MARKER in str(description)
 
 
-# SpaceId pattern characters (see the SpaceId pattern [0-9a-zA-Z-_=.+]+, Req 9.7)
+# SpaceId pattern characters (see the SpaceId pattern [0-9a-zA-Z-_=.+]+)
 _SPACE_ID_ALLOWED_CHARS = frozenset(
     '0123456789'
     'abcdefghijklmnopqrstuvwxyz'
@@ -367,7 +367,7 @@ _SPACE_ID_FALLBACK = 'cid-space'
 
 
 def derive_space_id(name_or_id: str) -> str:
-    """Derive a valid QuickSight space id deterministically from a name or id (Req 9.7).
+    """Derive a valid QuickSight space id deterministically from a name or id.
 
     Sanitization rules (deterministic: the same input always yields the same output):
 
@@ -402,14 +402,14 @@ def derive_space_id(name_or_id: str) -> str:
 # Check indicator used to mark deployed entries in listings/pickers, mirroring the
 # existing dashboard picker in common.py
 DEPLOYED_MARK = '✓'
-# Category hidden from listings and pickers (Req 11.4)
+# Category hidden from listings and pickers
 HIDDEN_CATEGORY = 'Deprecated'
 # Category used when an entry declares none, mirroring the dashboard picker default
 DEFAULT_CATEGORY = 'Other'
 
 
 def build_agent_listing(agents_catalog: dict, deployed_ids) -> dict:
-    """Build the category-grouped agent listing / picker structure (Req 6.2, 11.1, 11.2, 11.4).
+    """Build the category-grouped agent listing / picker structure.
 
     Groups catalog agent entries by ``category``, hides entries in category
     ``Deprecated``, and marks entries whose catalog key or ``agentId`` is in
@@ -460,7 +460,7 @@ def build_agent_listing(agents_catalog: dict, deployed_ids) -> dict:
 
 
 def select_database_from_candidates(dataset_databases) -> str | None:
-    """Select the Athena database for the agent Parameter_Store from dataset candidates (Req 20.7).
+    """Select the Athena database for the agent Parameter_Store from dataset candidates.
 
     Pure selection kernel for the dataset-based database inference (step 2b of the
     agent-command resolution chain): the agent commands collect the Athena database

@@ -29,7 +29,7 @@ function skip_without_aws {
 }
 
 @test "--help lists create-agent, list-agents and delete-agent" {
-  # Runs without AWS credentials (Req 1.1)
+  # Runs without AWS credentials
   run cid-cmd --help
 
   [ "$status" -eq 0 ]

@@ -2,7 +2,7 @@
 # Loaded via dashboards/catalog.yaml like any dashboard resource file;
 # personaFile is resolved relative to this file.
 # All dependsOn keys reference existing core catalog entries (referential
-# completeness, Req 15.2-15.4). The core catalog carries no dedicated
+# completeness). The core catalog carries no dedicated
 # CloudWatch dashboard key, so the foundational usage dashboards serve as the
 # operational visibility surface, with Trusted Advisor and Compute Optimizer
 # datasets attached as operational-health knowledge (DATA_SET, never deployed).

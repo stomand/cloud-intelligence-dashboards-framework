@@ -67,7 +67,7 @@ def run(cid_obj, **kwargs):
 
 
 class TestCategoryGroupingAndDeployedMarking:
-    """Req 11.1, 11.2: category-grouped listing with ✓ on deployed entries."""
+    """: category-grouped listing with ✓ on deployed entries."""
 
     def test_entries_grouped_by_category(self):
         cid_obj = make_cid(make_catalog())
@@ -105,7 +105,7 @@ class TestCategoryGroupingAndDeployedMarking:
 
 
 class TestLiveStateSource:
-    """Req 11.3: deployment status comes from live DescribeAgent per entry,
+    """: deployment status comes from live DescribeAgent per entry,
     never from ListAgents (which omits PREVIEW/FAILED agents)."""
 
     def test_agent_get_called_once_per_non_deprecated_entry(self):
@@ -124,7 +124,7 @@ class TestLiveStateSource:
 
 
 class TestDeprecatedHidden:
-    """Req 11.4: Deprecated entries are absent from output AND never described."""
+    """: Deprecated entries are absent from output AND never described."""
 
     def test_deprecated_entry_absent_from_listing_and_output(self):
         cid_obj = make_cid(make_catalog(), deployed=('legacy',))
@@ -143,7 +143,7 @@ class TestDeprecatedHidden:
 
 
 class TestUnknownStatusFallback:
-    """Req 11.5: a live-query failure marks that entry '?' and listing continues."""
+    """: a live-query failure marks that entry '?' and listing continues."""
 
     def test_failing_entry_listed_with_unknown_indicator(self):
         cid_obj = make_cid(make_catalog(), deployed=('finops',), failing=('kpi',))

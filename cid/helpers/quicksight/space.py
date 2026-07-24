@@ -6,7 +6,7 @@ layer. All Space operations live on the ``quicksight`` boto3 client
 (``quicksight-2018-04-01``); there is no separate quicksuite client.
 
 This helper is the thin AWS I/O layer over the pure set-math in
-:mod:`cid.helpers.quicksight.agent_logic` (Req 5.1, 5.2, 5.4).
+:mod:`cid.helpers.quicksight.agent_logic`.
 """
 import time
 import logging
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # The exact owner action set the Quick console applies on "Create space" (verified live).
 # An API-created Space starts with Permissions: [] and the creating principal is NOT
 # auto-granted owner rights, so this helper must grant this full 16-action set or the
-# customer cannot open/use the Space in the console (Req 6.9).
+# customer cannot open/use the Space in the console.
 # NOTE: quicksight:UpdateSpaceResources is IAM-gated on the caller and is NOT a grantable
 # space permission — it never appears in this set.
 SPACE_OWNER_ACTIONS = [
@@ -141,7 +141,7 @@ class Space(CidBase):
         return arns
 
     def grant_owner(self, space_id, principal_arn) -> None:
-        """Grant the full 16-action owner set to a principal (Req 6.9).
+        """Grant the full 16-action owner set to a principal.
 
         Must be the exact :data:`SPACE_OWNER_ACTIONS` set the console applies on
         "Create space" — the minimal 5-action set leaves the Space unusable
@@ -161,7 +161,7 @@ class Space(CidBase):
         logger.info(f'Granted space owner permissions on {space_id!r} to {principal_arn!r}')
 
     def find_by_name(self, name) -> list:
-        """Resolve a Space display name to space ids via SearchSpaces (Req 9.6).
+        """Resolve a Space display name to space ids via SearchSpaces.
 
         Uses the official ``SpaceQuicksightSearchFilter`` shape with LOWERCASE keys
         (``name``/``operator``/``value``); names ``SPACE_ID | SPACE_NAME``; operators
@@ -196,11 +196,11 @@ class Space(CidBase):
                             remove_stale=False, managed_arns=None) -> list:
         """Add any missing resources to the Space so it contains the desired ARN set.
 
-        The update is strictly additive (Req 6.7, 9.2, 9.4): only ARNs not already
+        The update is strictly additive: only ARNs not already
         attached are added (de-duplicated by ARN via
         :func:`~cid.helpers.quicksight.agent_logic.compute_space_additions`), and
         pre-existing resources are never removed or reconfigured. Removal is opt-in
-        (Req 9.5, 12.6): when ``remove_stale`` is truthy, only CID-managed
+: when ``remove_stale`` is truthy, only CID-managed
         (``managed_arns``) resources no longer referenced by ``desired_arns`` are
         removed, via
         :func:`~cid.helpers.quicksight.agent_logic.compute_stale_removals`.
@@ -209,14 +209,14 @@ class Space(CidBase):
         UpdateSpaceResources does not validate resource existence, so
         ``FailedResourceOperations`` only surfaces permission/format failures. Each
         failed operation is reported via a logger warning and the update continues
-        with the resources that succeeded (Req 6.8).
+        with the resources that succeeded.
 
         :param space_id: the SpaceId to update
         :param desired_arns: iterable of resource ARNs the Space should contain
             (only ARNs confirmed present upstream)
         :param resource_type: SpaceResourceOperation ResourceType
             (``DASHBOARD | DATA_SET | TOPIC | KNOWLEDGE_BASE | ACTION_CONNECTOR``);
-            ``DATA_SET`` is used for dataset knowledge attachment (Req 8.8)
+            ``DATA_SET`` is used for dataset knowledge attachment
         :param remove_stale: the ``--cleanup-space`` flag; falsy means
             nothing is ever removed
         :param managed_arns: iterable of ARNs known to be CID-managed; only these are
@@ -267,7 +267,7 @@ class Space(CidBase):
         return failed
 
     def write_provenance(self, space_arn, space_id, timeout=300, interval=5) -> None:
-        """Write the dual CID_Managed provenance signature onto a Space (Req 13.4).
+        """Write the dual CID_Managed provenance signature onto a Space.
 
         (a) TagResource with the CID provenance tag — LOG-AND-CONTINUE on failure,
         mirroring ``QuickSight.set_tags`` (the tag write is best-effort because

@@ -243,7 +243,7 @@ def assert_no_deploy_or_data_layer_calls(cid_obj):
 # Task 9.4: mock-based unit tests for the create flow
 # ===========================================================================
 class TestErrorPropagation:
-    """Req 1.5: CidError/CidCritical propagate cleanly out of the handler."""
+    """: CidError/CidCritical propagate cleanly out of the handler."""
 
     def test_cid_error_from_helper_propagates_unchanged(self):
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
@@ -264,7 +264,7 @@ class TestErrorPropagation:
 
 
 class TestSubscriptionDetectAndRequire:
-    """Req 6.1, 6.15: subscription failure is CidCritical and never activates."""
+    """: subscription failure is CidCritical and never activates."""
 
     def test_subscription_failure_raises_cid_critical_and_creates_nothing(self):
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
@@ -279,7 +279,7 @@ class TestSubscriptionDetectAndRequire:
 
 
 class TestCleanupOnFailure:
-    """Req 7.7, 7.9: best-effort delete of the partially created agent, then re-raise."""
+    """: best-effort delete of the partially created agent, then re-raise."""
 
     def test_generic_create_failure_triggers_cleanup_delete_and_reraises(self):
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
@@ -287,11 +287,11 @@ class TestCleanupOnFailure:
         excinfo, _ = run_raising(cid_obj, RuntimeError, agent_id=AGENT_ID)
         assert 'boom' in str(excinfo.value)
         # cleanup delete goes through Agent.delete, which retries ConflictException
-        # internally (Req 7.9, covered by the Agent helper tests)
+        # internally (, covered by the Agent helper tests)
         cid_obj.agent.delete.assert_called_once_with(AGENT_ID)
 
     def test_cleanup_delete_failure_is_tolerated_and_original_error_reraised(self):
-        """Req 7.9 plumbing: even when the ConflictException retry loop ultimately
+        """ plumbing: even when the ConflictException retry loop ultimately
         fails, the cleanup stays best-effort and the original error surfaces."""
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         cid_obj.agent.create_or_update.side_effect = RuntimeError('boom')
@@ -311,7 +311,7 @@ class TestCleanupOnFailure:
 
 
 class TestResourceExistsSuccessPlumbing:
-    """Req 7.8: ResourceExistsException during create is success.
+    """: ResourceExistsException during create is success.
 
     The tolerate-ResourceExists behavior lives in Agent.create_or_update (covered by
     test_agent_helper.py); here we assert the handler treats the helper's 'created'
@@ -331,10 +331,10 @@ class TestResourceExistsSuccessPlumbing:
 
 
 class TestBringYourOwnSpace:
-    """Req 9.1, 9.3, 9.6, 9.7: --space select/create and SearchSpaces resolution."""
+    """: --space select/create and SearchSpaces resolution."""
 
     def test_single_name_match_reuses_the_existing_space(self):
-        """Req 9.1, 9.6: a single SearchSpaces match is reused, not re-created."""
+        """: a single SearchSpaces match is reused, not re-created."""
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         existing_arn = f'arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:space/existing-space'
         cid_obj.space.find_by_name.return_value = ['existing-space']
@@ -350,7 +350,7 @@ class TestBringYourOwnSpace:
         assert dashboard_update_calls(cid_obj)[0].args[0] == 'existing-space'
 
     def test_no_name_match_creates_space_with_derived_id(self):
-        """Req 9.3, 9.7: non-existent --space name creates a Space with derive_space_id."""
+        """: non-existent --space name creates a Space with derive_space_id."""
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         cid_obj.space.find_by_name.return_value = []
         result, _ = run(cid_obj, agent_id=AGENT_ID, space_name='My Space')
@@ -362,7 +362,7 @@ class TestBringYourOwnSpace:
         cid_obj.space.grant_owner.assert_called_once_with('My-Space', USER_ARN)
 
     def test_ambiguous_name_match_raises_cid_error_listing_ids(self):
-        """Req 9.6: multiple exact matches raise a CidError listing the matching ids."""
+        """: multiple exact matches raise a CidError listing the matching ids."""
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         cid_obj.space.find_by_name.return_value = ['space-one', 'space-two']
         excinfo, _ = run_raising(cid_obj, CidError, agent_id=AGENT_ID, space_name='My Space')
@@ -373,7 +373,7 @@ class TestBringYourOwnSpace:
 
 
 class TestKnowledgeBaseAttachment:
-    """Req 16.2, 16.3: valid KB ARNs attach; unresolvable references warn and skip."""
+    """: valid KB ARNs attach; unresolvable references warn and skip."""
 
     def test_valid_arns_attach_and_non_arn_reference_warns(self):
         kb_arn = f'arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:knowledge-base/kb-one'
@@ -398,7 +398,7 @@ class TestKnowledgeBaseAttachment:
 
 
 class TestPrincipalResolution:
-    """Req 17.4, 17.7: Author Pro entitlement and registered-principal checks."""
+    """: Author Pro entitlement and registered-principal checks."""
 
     def test_missing_author_pro_role_raises_cid_critical(self):
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',),
@@ -420,7 +420,7 @@ class TestPrincipalResolution:
 
 
 class TestGenAiAvailabilityAndAccessDenied:
-    """Req 17.5, 17.6: gen-AI availability pre-check and AccessDenied handling."""
+    """: gen-AI availability pre-check and AccessDenied handling."""
 
     def test_missing_genai_operations_raise_cid_critical_naming_region_and_partition(self):
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
@@ -445,7 +445,7 @@ class TestGenAiAvailabilityAndAccessDenied:
 
 
 class TestParameterPersistence:
-    """Req 6.14: per-agent parameter persistence."""
+    """: per-agent parameter persistence."""
 
     def test_parameters_persisted_keyed_by_agent_id(self):
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
@@ -456,7 +456,7 @@ class TestParameterPersistence:
 
 
 class TestConflictGuard:
-    """Req 13.1, 13.2: non-CID collisions are refused; CID-managed agents proceed."""
+    """: non-CID collisions are refused; CID-managed agents proceed."""
 
     def test_non_cid_existing_agent_is_refused_without_mutation(self):
         existing = {'Arn': AGENT_ARN, 'Description': 'hand-made agent'}
@@ -478,7 +478,7 @@ class TestConflictGuard:
 
 
 class TestNonCidSpaceReuse:
-    """Req 13.3: a non-CID --space is reused additively, never mutated itself."""
+    """: a non-CID --space is reused additively, never mutated itself."""
 
     def test_non_cid_space_is_not_renamed_tagged_or_repermissioned(self):
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
@@ -498,7 +498,7 @@ class TestNonCidSpaceReuse:
 
 
 class TestDatasetKnowledge:
-    """Req 8.8, 8.9: present datasets attach as DATA_SET; missing ones warn; zero creates."""
+    """: present datasets attach as DATA_SET; missing ones warn; zero creates."""
 
     def test_present_dataset_attaches_missing_dataset_warns_no_creates(self):
         definition = make_definition(required=('dash-a',),
@@ -525,7 +525,7 @@ class TestDatasetKnowledge:
 
 
 class TestDualProvenanceAndLifecycle:
-    """Req 13.4, 5.8, 6.12: dual provenance writes and PUBLISHED wait_active."""
+    """: dual provenance writes and PUBLISHED wait_active."""
 
     def test_dual_provenance_written_on_created_space_and_agent(self):
         cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
@@ -546,7 +546,7 @@ class TestDualProvenanceAndLifecycle:
         assert not cid_obj.agent.wait_active.called
 
     def test_wait_active_failed_fail_fast_surfaces(self):
-        """Req 5.8: FAILED status raised by wait_active surfaces from the handler."""
+        """: FAILED status raised by wait_active surfaces from the handler."""
         cid_obj = make_cid(make_definition(required=('dash-a',), lifecycle='PUBLISHED'),
                            present=('dash-a',))
         cid_obj.agent.wait_active.side_effect = CidError(

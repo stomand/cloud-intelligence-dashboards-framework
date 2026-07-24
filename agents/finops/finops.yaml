@@ -4,7 +4,7 @@
 # CUDOS/CID/KPI foundational dashboards are Required; the Trends dashboard is
 # Optional; the Trends anomaly-detection datasets are attached as cost-anomaly
 # knowledge (DATA_SET, never deployed). All keys exist in the core catalog
-# (referential completeness, Req 15.2-15.4).
+# (referential completeness).
 agents:
   finops:
     category: Foundational

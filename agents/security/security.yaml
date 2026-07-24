@@ -2,7 +2,7 @@
 # Loaded via dashboards/catalog.yaml like any dashboard resource file;
 # personaFile is resolved relative to this file.
 # The core catalog carries no Security Hub dashboard key, so per referential
-# completeness (Req 15.2) this file references the closest existing keys:
+# completeness this file references the closest existing keys:
 # the foundational dashboards for security-service spend/usage visibility and
 # the Trusted Advisor organizational view dataset as the compliance-findings
 # knowledge source (attached as DATA_SET when present, never deployed).

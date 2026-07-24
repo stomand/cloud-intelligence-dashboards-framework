@@ -305,7 +305,7 @@ def test_property_17_space_owner_grant_uses_exactly_the_canonical_action_set(spa
 
 # ---------------------------------------------------------------------------
 # Regression: write_provenance retries through ConflictException (defensive
-# mirror of the Agent.write_provenance live-bug fix — Req 1.5, 7.9 pattern)
+# mirror of the Agent.write_provenance live-bug fix — pattern)
 # ---------------------------------------------------------------------------
 def test_write_provenance_conflict_settles_then_marker_written():
     """UpdateSpace ConflictException while the Space settles is retried until

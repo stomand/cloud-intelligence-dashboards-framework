@@ -44,7 +44,7 @@ delete_agent = Cid.delete_agent.__wrapped__
 # the ONLY delete calls the delete-agent flow may ever issue (Property 23)
 ALLOWED_DELETE_CALLS = {'agent.delete', 'space.client.delete_space'}
 # any create/delete call whose name contains one of these is out of scope for the
-# whole platform: dashboards, datasets, knowledge bases, Research (Req 12.3, 16.1, 16.4)
+# whole platform: dashboards, datasets, knowledge bases, Research
 FORBIDDEN_NAME_FRAGMENTS = (
     'create_dashboard', 'delete_dashboard',
     'create_data_set', 'delete_data_set', 'create_dataset', 'delete_dataset',
@@ -185,7 +185,7 @@ def assert_only_in_scope_calls(cid_obj):
     The delete flow may only ever delete the target Agent (``agent.delete``) and,
     when allowed, the agent's Space (``space.client.delete_space``). It must never
     issue ANY create call, and never any dashboard/dataset/knowledge-base/Research
-    create or delete call (Req 12.3, 16.1, 16.4).
+    create or delete call.
     """
     for name in all_call_names(cid_obj):
         method = name.split('.')[-1]
@@ -201,7 +201,7 @@ def assert_only_in_scope_calls(cid_obj):
 # Task 12.3: mock-based unit tests for delete scoping
 # ===========================================================================
 class TestConfirmationGate:
-    """Req 12.1: deletion is gated by a yes/no parameter defaulting to 'no'."""
+    """: deletion is gated by a yes/no parameter defaulting to 'no'."""
 
     def test_confirmation_prompt_defaults_to_no(self):
         """The yes/no confirmation is requested with default='no', and a
@@ -231,7 +231,7 @@ class TestConfirmationGate:
 
 
 class TestMissingTargetSuccess:
-    """Req 12.2: a missing delete target is treated as success."""
+    """: a missing delete target is treated as success."""
 
     def test_absent_agent_returns_cleanly_without_delete_call(self):
         cid_obj = make_cid({AGENT_ID: make_target_definition()}, deployed_agents={})
@@ -243,7 +243,7 @@ class TestMissingTargetSuccess:
 
 
 class TestNoDashboardDelete:
-    """Req 12.3: deleting an Agent never deletes any dashboard."""
+    """: deleting an Agent never deletes any dashboard."""
 
     def test_successful_delete_issues_no_dashboard_delete_anywhere(self):
         reset_parameters({'confirm-delete': 'yes'})
@@ -262,7 +262,7 @@ class TestNoDashboardDelete:
 
 
 class TestNonCidTargetRefused:
-    """Req 12.7: a target lacking CID_Managed provenance is refused and reported."""
+    """: a target lacking CID_Managed provenance is refused and reported."""
 
     def test_non_cid_agent_refused_with_report_and_no_delete_call(self):
         reset_parameters({'confirm-delete': 'yes'})
@@ -277,7 +277,7 @@ class TestNonCidTargetRefused:
 
     def test_provenance_tag_alone_is_sufficient_to_proceed(self):
         """Dual-mechanism detection: the provenance tag counts even without the
-        Description marker (Req 13.4)."""
+        Description marker."""
         reset_parameters({'confirm-delete': 'yes'})
         target = make_deployed_agent(AGENT_ID, cid_managed=False)
         cid_obj = make_cid({AGENT_ID: make_target_definition()}, {AGENT_ID: target})
@@ -289,7 +289,7 @@ class TestNonCidTargetRefused:
 
 
 class TestConflictRetryDelegation:
-    """Req 12.8: ConflictException wait-and-retry during delete.
+    """: ConflictException wait-and-retry during delete.
 
     The retry loop itself lives in ``Agent.delete`` (``helpers/quicksight/agent.py``)
     and is covered by ``test_agent_helper.py`` (ConflictException while the agent is
@@ -369,13 +369,13 @@ def test_property_22_space_deleted_iff_no_other_cid_managed_agent_references_it(
     assert result == AGENT_ID
     cid_obj.agent.delete.assert_called_once_with(AGENT_ID)
     if blocking_ids:
-        # retained + every blocking dependency reported (Req 12.5)
+        # retained + every blocking dependency reported
         assert not cid_obj.space.client.delete_space.called
         assert 'retained' in output
         for other_id in blocking_ids:
             assert other_id in output
     else:
-        # no other deployed CID-managed agent references the space: deleted (Req 12.4)
+        # no other deployed CID-managed agent references the space: deleted
         cid_obj.space.client.delete_space.assert_called_once_with(
             AwsAccountId=ACCOUNT_ID, SpaceId=SPACE_KEY)
 
@@ -408,7 +408,7 @@ def test_property_23_delete_never_issues_out_of_scope_create_or_delete_calls(
 
     if target_exists and not target_managed:
         excinfo, _ = run_raising(cid_obj, CidError, agent_id=AGENT_ID)
-        assert 'not managed' in str(excinfo.value)          # reported (Req 12.7)
+        assert 'not managed' in str(excinfo.value)          # reported
         assert not cid_obj.agent.delete.called              # zero delete calls
         assert not cid_obj.space.client.delete_space.called
     else:

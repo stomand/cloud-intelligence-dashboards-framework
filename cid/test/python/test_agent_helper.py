@@ -137,10 +137,10 @@ def created_agent_shape(definition, arn='arn:new-agent', status='ACTIVE'):
 # ---------------------------------------------------------------------------
 
 class TestCreateOrUpdateBranches:
-    """No-op vs update vs create branches (Req 7.1, 7.2)."""
+    """No-op vs update vs create branches."""
 
     def test_noop_when_configuration_matches(self):
-        """Matching desired/deployed config makes no mutating API call (Req 7.1)."""
+        """Matching desired/deployed config makes no mutating API call."""
         helper, client = make_agent_helper()
         definition = base_definition()
         client.describe_agent.return_value = {'Agent': deployed_agent_matching(definition, SPACE_ARNS)}
@@ -153,7 +153,7 @@ class TestCreateOrUpdateBranches:
         client.create_agent.assert_not_called()
 
     def test_update_when_configuration_drifts(self):
-        """Drifted config triggers exactly one UpdateAgent call (Req 7.2)."""
+        """Drifted config triggers exactly one UpdateAgent call."""
         helper, client = make_agent_helper()
         definition = base_definition()
         deployed = deployed_agent_matching(definition, SPACE_ARNS)
@@ -169,7 +169,7 @@ class TestCreateOrUpdateBranches:
         assert payload['WelcomeMessage'] == definition['welcomeMessage']
 
     def test_create_when_agent_absent(self):
-        """A missing agent (DescribeAgent NotFound) triggers CreateAgent (Req 7.2)."""
+        """A missing agent (DescribeAgent NotFound) triggers CreateAgent."""
         helper, client = make_agent_helper()
         definition = base_definition()
         wire_create_lifecycle(client, created_agent_shape(definition))
@@ -186,7 +186,7 @@ class TestCreateOrUpdateBranches:
 
 
 class TestUpdateAlwaysIncludesName:
-    """Name is included on EVERY UpdateAgent call (Req 7.6)."""
+    """Name is included on EVERY UpdateAgent call."""
 
     def test_name_present_on_update(self):
         helper, client = make_agent_helper()
@@ -216,7 +216,7 @@ class TestUpdateAlwaysIncludesName:
 
 
 class TestResourceExistsTreatedAsSuccess:
-    """ResourceExistsException during create is success (Req 7.8)."""
+    """ResourceExistsException during create is success."""
 
     def test_resource_exists_on_create_is_success(self):
         helper, client = make_agent_helper()
@@ -240,10 +240,10 @@ class TestResourceExistsTreatedAsSuccess:
 
 
 class TestWaitActive:
-    """wait_active polling behavior (Req 5.6, 5.7, 5.8)."""
+    """wait_active polling behavior."""
 
     def test_creating_then_active_returns_agent(self):
-        """CREATING -> CREATING -> ACTIVE sequence returns the ACTIVE agent (Req 5.6)."""
+        """CREATING -> CREATING -> ACTIVE sequence returns the ACTIVE agent."""
         helper, client = make_agent_helper()
         client.describe_agent.side_effect = [
             {'Agent': {'AgentStatus': 'CREATING'}},
@@ -256,7 +256,7 @@ class TestWaitActive:
         assert mock_sleep.call_count == 2
 
     def test_timeout_raises_ciderror_with_agent_id_and_last_status(self):
-        """Timeout raises CidError naming the agent and its last status (Req 5.7)."""
+        """Timeout raises CidError naming the agent and its last status."""
         helper, client = make_agent_helper()
         client.describe_agent.return_value = {'Agent': {'AgentStatus': 'CREATING'}}
         with patch('cid.helpers.quicksight.agent.time.sleep'):
@@ -268,7 +268,7 @@ class TestWaitActive:
         assert '300' in message
 
     def test_failed_status_fails_fast_with_error_message(self):
-        """FAILED raises immediately with ErrorMessage, not via timeout (Req 5.8)."""
+        """FAILED raises immediately with ErrorMessage, not via timeout."""
         helper, client = make_agent_helper()
         client.describe_agent.return_value = {
             'Agent': {'AgentStatus': 'FAILED', 'ErrorMessage': 'model access denied'},
@@ -285,7 +285,7 @@ class TestWaitActive:
 
 
 class TestGrantOwner:
-    """AGENT_OWNER_ACTIONS granted as one single set (Req 6.11)."""
+    """AGENT_OWNER_ACTIONS granted as one single set."""
 
     def test_grant_owner_sends_the_five_actions_in_one_call(self):
         helper, client = make_agent_helper()
@@ -304,7 +304,7 @@ class TestGrantOwner:
 
 
 class TestDelete:
-    """delete tolerates missing targets and retries through ConflictException (Req 7.9)."""
+    """delete tolerates missing targets and retries through ConflictException."""
 
     def test_delete_success(self):
         helper, client = make_agent_helper()
@@ -317,7 +317,7 @@ class TestDelete:
         helper.delete('my-agent')  # must not raise
 
     def test_conflict_settles_then_delete_succeeds(self):
-        """ConflictException while UPDATING retries until the status settles (Req 7.9)."""
+        """ConflictException while UPDATING retries until the status settles."""
         helper, client = make_agent_helper()
         client.delete_agent.side_effect = [
             ConflictException('agent is UPDATING'),
@@ -331,7 +331,7 @@ class TestDelete:
         assert mock_sleep.call_count == 2
 
     def test_conflict_never_settles_raises_ciderror_at_300s_bound(self):
-        """A conflict that never settles raises CidError once 300s elapse (Req 7.9)."""
+        """A conflict that never settles raises CidError once 300s elapse."""
         helper, client = make_agent_helper()
         client.delete_agent.side_effect = ConflictException('agent is UPDATING')
         client.describe_agent.return_value = {'Agent': {'AgentStatus': 'UPDATING'}}
@@ -345,7 +345,7 @@ class TestDelete:
 
 
 class TestDescribeBasedExistence:
-    """Existence detection uses describe_agent, never list_agents (Req 11.3)."""
+    """Existence detection uses describe_agent, never list_agents."""
 
     def test_get_uses_describe_agent_not_list_agents(self):
         """get() must work for agents that ListAgents omits (PREVIEW/FAILED states)."""
@@ -440,10 +440,10 @@ def test_property_16_update_full_replacement_and_name_always_sent(
     assert result['action'] == 'updated'
     client.update_agent.assert_called_once()
     payload = client.update_agent.call_args.kwargs
-    # Name is always included and non-empty (Req 7.6)
+    # Name is always included and non-empty
     assert payload.get('Name') == name
     assert str(payload['Name']).strip()
-    # Full-replacement fields carry the complete desired values, not deltas (Req 7.5)
+    # Full-replacement fields carry the complete desired values, not deltas
     assert payload['CustomPromptInput'] == {'NewPrompt': _expected_new_prompt(persona)}
     assert payload['StarterPrompts'] == list(starter_prompts)
     assert payload['WelcomeMessage'] == welcome
@@ -563,7 +563,7 @@ def test_property_17_agent_owner_grant_exact_action_set(agent_id, principal):
 #  1. `cid-cmd create-agent --agent-id finops` crashed with an uncaught
 #     `ConflictException: Cannot update Agent cid-finops-advisor in UPDATING status`
 #     raised from write_provenance's UpdateAgent marker call right after CreateAgent
-#     (Req 1.5, 7.9).
+#.
 #  2. Retrying that UpdateAgent until accepted got it ACCEPTED while the agent's
 #     initial publish workflow was still in flight; the overlapping publish left
 #     duplicate internal records for the agent (TagResource then failed with
@@ -584,7 +584,7 @@ from cid.helpers.quicksight.agent_logic import CID_MANAGED_MARKER
 
 class TestCreateBakesProvenanceMarker:
     """_create writes the CID-managed marker into the Description at CreateAgent
-    time, so no post-create UpdateAgent marker write is ever needed (Req 13.4)."""
+    time, so no post-create UpdateAgent marker write is ever needed."""
 
     def test_create_appends_marker_to_description(self):
         helper, client = make_agent_helper()
@@ -696,7 +696,7 @@ class TestSpacesAttachedAfterCreateNotAtCreate:
         client.update_agent.assert_not_called()
 
     def test_attach_retries_through_residual_conflict(self):
-        """A residual ConflictException on the attach retries within the budget (Req 7.9)."""
+        """A residual ConflictException on the attach retries within the budget."""
         helper, client = make_agent_helper()
         definition = base_definition()
         wire_create_lifecycle(client, created_agent_shape(definition))
@@ -757,7 +757,7 @@ class TestWriteProvenanceMutationSafety:
 
     def test_residual_conflict_on_settled_agent_retries_until_written(self):
         """A residual ConflictException flap on an ACTIVE agent still retries
-        (Req 7.9 pattern) until the marker write succeeds."""
+        ( pattern) until the marker write succeeds."""
         helper, client = make_agent_helper()
         client.describe_agent.return_value = {
             'Agent': {'Name': 'CID FinOps Advisor', 'Description': 'A test agent', 'AgentStatus': 'ACTIVE'},

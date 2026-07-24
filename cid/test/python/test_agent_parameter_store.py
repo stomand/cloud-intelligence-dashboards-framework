@@ -1,4 +1,4 @@
-"""Mock-based unit tests for the agent-command Parameter_Store database inference (Req 20).
+"""Mock-based unit tests for the agent-command Parameter_Store database inference.
 
 Feature: cid-cmd-agent-flow-platform (task 18.4)
 
@@ -12,7 +12,7 @@ Harness: mirrors ``test_create_agent_flow.py`` / ``test_delete_agent_flow.py`` �
 ``cached_property`` descriptors, and the real ``cid.utils`` parameter state
 isolated (save/restore) around every test. No real AWS call is ever made, and an
 autouse fixture fails any test in which an interactive prompt would be displayed
-during resolution (Req 20.4, 20.8).
+during resolution.
 """
 import inspect
 import logging
@@ -68,7 +68,7 @@ def _no_prompts():
     """Fail the test if any interactive prompt is invoked during resolution.
 
     The agent parameter-store resolution must never display the Athena database
-    prompt (with its CREATE NEW option) or the workgroup prompt (Req 20.4, 20.8),
+    prompt (with its CREATE NEW option) or the workgroup prompt,
     so ``cid.common.get_parameter`` / ``get_yesno_parameter`` are patched to raise.
     """
     def _fail(*args, **kwargs):
@@ -125,10 +125,10 @@ def assert_never_creates(cid_obj):
 
 
 # ===========================================================================
-# Req 20.1: session-resolved database used unchanged, no inference
+#: session-resolved database used unchanged, no inference
 # ===========================================================================
 class TestSessionResolvedDatabase:
-    """Req 20.1: a session-resolved athena-database is used unchanged with no inference."""
+    """: a session-resolved athena-database is used unchanged with no inference."""
 
     def test_explicit_parameter_used_unchanged_no_inference(self):
         reset_parameters({'athena-database': 'my_explicit_db', 'athena-workgroup': 'my_wg'})
@@ -156,10 +156,10 @@ class TestSessionResolvedDatabase:
 
 
 # ===========================================================================
-# Req 20.2a: well-known CID database names
+#a: well-known CID database names
 # ===========================================================================
 class TestWellKnownNameInference:
-    """Req 20.2a: well-known CID names present in the Athena catalog win, in order."""
+    """a: well-known CID names present in the Athena catalog win, in order."""
 
     def test_cid_cur_hit_sets_athena_database(self):
         cid_obj = make_cid(databases=['some_other_db', 'cid_cur', 'cid_data_export'])
@@ -179,10 +179,10 @@ class TestWellKnownNameInference:
 
 
 # ===========================================================================
-# Req 20.2b + 20.7: dataset physical-table-map inference
+#b + 20.7: dataset physical-table-map inference
 # ===========================================================================
 class TestDatasetMapInference:
-    """Req 20.2b, 20.7: majority database from dataset schemas, lexicographic tie-break."""
+    """b, 20.7: majority database from dataset schemas, lexicographic tie-break."""
 
     def test_majority_database_wins_and_selection_is_logged(self, caplog):
         datasets = {
@@ -215,10 +215,10 @@ class TestDatasetMapInference:
 
 
 # ===========================================================================
-# Req 20.3: once-per-invocation caching
+#: once-per-invocation caching
 # ===========================================================================
 class TestOncePerInvocationCaching:
-    """Req 20.3: the resolution work runs at most once per command invocation."""
+    """: the resolution work runs at most once per command invocation."""
 
     def test_successful_resolution_runs_at_most_once(self):
         cid_obj = make_cid(databases=['cid_cur'])
@@ -244,17 +244,17 @@ class TestOncePerInvocationCaching:
 
 
 # ===========================================================================
-# Req 20.4: skip-on-failure — no prompt, single debug log, load/persist skipped
+#: skip-on-failure — no prompt, single debug log, load/persist skipped
 # ===========================================================================
 class TestSkipOnFailure:
-    """Req 20.4: inference/workgroup failure silently skips the Parameter_Store."""
+    """: inference/workgroup failure silently skips the Parameter_Store."""
 
     def _assert_silent_skip(self, cid_obj, caplog):
         """Load + dump both return without touching the controller; one debug skip log."""
         with caplog.at_level(logging.DEBUG, logger='cid.common'):
             cid_obj._load_agent_default_parameters(AGENT_KEY)
             cid_obj._dump_agent_default_parameters(AGENT_KEY)
-        # the controller is never touched: no load, no persist (Req 20.4)
+        # the controller is never touched: no load, no persist
         assert not cid_obj.parameters_controller.mock_calls
         # exactly one debug skip log per invocation
         skip_logs = [r for r in caplog.records if SKIP_LOG_FRAGMENT in r.getMessage()]
@@ -289,10 +289,10 @@ class TestSkipOnFailure:
 
 
 # ===========================================================================
-# Req 20.8: non-interactive workgroup resolution
+#: non-interactive workgroup resolution
 # ===========================================================================
 class TestWorkgroupResolution:
-    """Req 20.8: explicit athena-workgroup param, else the read-only default check."""
+    """: explicit athena-workgroup param, else the read-only default check."""
 
     def test_explicit_workgroup_parameter_honored(self):
         reset_parameters({'athena-workgroup': 'my-workgroup'})
@@ -310,15 +310,15 @@ class TestWorkgroupResolution:
         cid_obj.athena.client.get_work_group.assert_called_once_with(
             WorkGroup=DEFAULT_WORKGROUP)
         assert cid_utils.get_parameters().get('athena-workgroup') == DEFAULT_WORKGROUP
-        # never any workgroup creation (Req 20.4, 20.8)
+        # never any workgroup creation
         assert_never_creates(cid_obj)
 
 
 # ===========================================================================
-# Req 20.5: the deploy path (Athena helper) is untouched
+#: the deploy path (Athena helper) is untouched
 # ===========================================================================
 class TestDeployPathUntouched:
-    """Req 20.5: the guard lives only on the agent helpers; the Athena helper is unmodified."""
+    """: the guard lives only on the agent helpers; the Athena helper is unmodified."""
 
     def test_athena_helper_has_no_agent_guard_reference(self):
         source = inspect.getsource(athena_module)
@@ -340,10 +340,10 @@ class TestDeployPathUntouched:
 
 
 # ===========================================================================
-# Req 20.6: agent and dashboard rows coexist in the same store
+#: agent and dashboard rows coexist in the same store
 # ===========================================================================
 class TestStoreCoexistence:
-    """Req 20.6: the same cid_parameters store, context-keyed by agent id, dump-only."""
+    """: the same cid_parameters store, context-keyed by agent id, dump-only."""
 
     def test_dump_uses_same_controller_with_agent_context_and_touches_nothing_else(self):
         reset_parameters({'some-agent-param': 'value', 'profile-name': 'secret-profile'})

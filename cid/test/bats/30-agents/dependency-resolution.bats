@@ -67,13 +67,13 @@ function dashboard_present {
     --agent-id $agent_catalog_key \
     --catalog "$catalog"
 
-  # guidance error, non-zero exit (Req 8.3, 19.1)
+  # guidance error, non-zero exit
   [ "$status" -ne 0 ]
   echo "$output" | grep -q 'No CID dashboards'
   # points to the CID/CUDOS foundational and Data Collection guidance
   echo "$output" | grep -q 'https://catalog.workshops.aws/awscid/en-US'
   echo "$output" | grep -q 'https://catalog.workshops.aws/awscid/en-US/data-collection'
-  # the guidance error itself names no cid-cmd command (Req 8.3)
+  # the guidance error itself names no cid-cmd command
   echo "$output" | grep 'No CID dashboards' | grep -v -q 'cid-cmd'
 
   # nothing was deployed: dashboard count unchanged (still zero)
@@ -111,14 +111,14 @@ function dashboard_present {
     --agent-id $agent_catalog_key \
     --catalog "$catalog"
 
-  # proceeds with the present subset (Req 8.5, 8.6, 19.3)
+  # proceeds with the present subset
   [ "$status" -eq 0 ]
   # a warning is emitted for each missing dependency, pointing to the guidance
   echo "$output" | grep -q 'Warning:'
   echo "$output" | grep -q 'is not deployed'
   echo "$output" | grep -q 'Proceeding with the available dashboards'
   echo "$output" | grep -q 'https://catalog.workshops.aws/awscid'
-  # the warnings name no cid-cmd command (Req 8.5, 8.6)
+  # the warnings name no cid-cmd command
   echo "$output" | grep 'is not deployed' | grep -v -q 'cid-cmd'
 
   # nothing was deployed: dashboard count unchanged

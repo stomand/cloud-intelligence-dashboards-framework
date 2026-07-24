@@ -147,13 +147,12 @@ Copy this into your pull request description:
 Required: <keys>  |  Optional: <keys>
 ```
 
-## Review SLA
+## Review
 
-Content-only agent PRs that follow the template above are triaged by the
-maintainers within **five business days**. Because no Python review is involved, review
-focuses on catalog referential completeness, persona quality, and naming — well-formed
-contributions typically merge in one review round. PRs that also change Python source
-follow the regular (longer) code-review process.
+Content-only agent PRs that follow the template above go through the repo's normal
+review process. Because no Python review is involved, review focuses on catalog
+referential completeness, persona quality, and naming. PRs that also change Python
+source follow the regular code-review process.
 
 ## Testing your agent locally
 

@@ -362,7 +362,6 @@ cid-cmd create-agent --agent-id finops --space 'My Team Space' -y
 |---|---|
 | `--agent-id TEXT` | Agent id from the catalog (a category-grouped picker is shown when omitted) |
 | `--space TEXT` | Name of a Space to use instead of the per-agent default Space (bring-your-own Space) |
-| `--delete-space` | Not applicable for create-agent (reserved; accepted for symmetry with delete-agent) |
 | `--cleanup-space` | Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies |
 
 #### Agent Prerequisites

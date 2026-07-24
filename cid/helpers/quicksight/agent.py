@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 # The exact owner bundle for Agents (api-ref §12). Unlike Spaces, agent permissions
 # must be granted as one recognized complete action set — piecemeal single-action
-# grants fail with InvalidParameterValueException. Grant atomically (Req 6.11).
+# grants fail with InvalidParameterValueException. Grant atomically.
 AGENT_OWNER_ACTIONS = [
     'quicksight:DescribeAgent',
     'quicksight:UpdateAgent',
@@ -35,7 +35,7 @@ AGENT_OWNER_ACTIONS = [
 
 
 class Agent(CidBase):
-    """ Lifecycle operations for Quick Suite Chat Agents (Req 5.1, 5.2, 5.5) """
+    """ Lifecycle operations for Quick Suite Chat Agents """
 
     def __init__(self, session, resources=None) -> None:
         super().__init__(session)
@@ -48,7 +48,7 @@ class Agent(CidBase):
 
         Existence/provenance checks MUST use describe_agent by id: ListAgents does NOT
         surface agents in PREVIEW or FAILED states (observed live) — ListAgents is
-        enumeration-only (Req 11.3, 13.1).
+        enumeration-only.
 
         :param agent_id: the Agent id
         :returns: the ``Agent`` dict from the DescribeAgent response, or None if not found
@@ -64,7 +64,7 @@ class Agent(CidBase):
             return None
 
     def grant_owner(self, agent_id: str, principal_arn: str) -> None:
-        """ Grant the principal the 5-action agent owner bundle as a SINGLE set (Req 6.11).
+        """ Grant the principal the 5-action agent owner bundle as a SINGLE set.
 
         API-created Agents start with ``Permissions: []`` and the creating principal is
         not auto-granted owner rights. The grant must be the full recognized set in one
@@ -84,12 +84,12 @@ class Agent(CidBase):
         )
 
     def wait_active(self, agent_id: str, timeout: int = 300, interval: int = 5) -> dict:
-        """ Poll DescribeAgent until AgentStatus == ACTIVE (Req 5.6, 5.7, 5.8).
+        """ Poll DescribeAgent until AgentStatus == ACTIVE.
 
         Polls every ``interval`` seconds up to ``timeout`` seconds. FAIL FAST: if
         ``AgentStatus`` becomes FAILED, stop polling immediately and raise including the
         agent id and the Agent's ``ErrorMessage`` field, without waiting for the timeout
-        (Req 5.8 — observed live: a minimal agent went UPDATING -> FAILED).
+        ( — observed live: a minimal agent went UPDATING -> FAILED).
 
         :param agent_id: the Agent id
         :param timeout: maximum seconds to wait (default 300)
@@ -121,11 +121,11 @@ class Agent(CidBase):
             elapsed += interval
 
     def delete(self, agent_id: str, timeout: int = 300, interval: int = 5) -> None:
-        """ Delete an Agent, tolerating a missing target (Req 7.9, 12.2, 12.8).
+        """ Delete an Agent, tolerating a missing target.
 
         A ResourceNotFoundException is treated as success (the target is already gone).
         On ConflictException while the Agent is UPDATING/CREATING (observed live), wait
-        for the status to settle and retry, up to ``timeout`` seconds total (Req 7.9).
+        for the status to settle and retry, up to ``timeout`` seconds total.
 
         :param agent_id: the Agent id
         :param timeout: maximum total seconds to retry through ConflictException (default 300)
@@ -235,7 +235,7 @@ class Agent(CidBase):
         return params
 
     def write_provenance(self, agent_arn: str, agent_id: str, timeout: int = 300, interval: int = 5) -> None:
-        """ Dual CID_Managed provenance write for an Agent (Req 13.4).
+        """ Dual CID_Managed provenance write for an Agent.
 
         (a) ensure the CID-managed marker is present in the agent Description via
             UpdateAgent. :meth:`_create` already bakes the marker into the CreateAgent
@@ -375,30 +375,30 @@ class Agent(CidBase):
         }
 
     def create_or_update(self, definition: dict, space_arns) -> dict:
-        """ Idempotent Agent create-or-update: create, drift-diffed update, or no-op (Req 6.10, 7.1-7.8).
+        """ Idempotent Agent create-or-update: create, drift-diffed update, or no-op.
 
         Create path (the agent does not exist per :meth:`get`): one ``CreateAgent`` call
         carrying all 5 persona fields (write shape ``CustomPromptInput.NewPrompt``), the
         starter prompts, the welcome message, the attached Space ARNs, the action
-        connectors, and the lifecycle (Req 6.10). A ``ResourceExistsException`` is
-        treated as success (Req 7.8).
+        connectors, and the lifecycle. A ``ResourceExistsException`` is
+        treated as success.
 
         Update path (the agent exists): drift is diffed field-by-field against the
         DescribeAgent read shape — persona via :func:`persona_differs` over the 5 fields
-        excluding the server-derived ``promptSummary`` (Req 7.3, the persona reads back
+        excluding the server-derived ``promptSummary`` (, the persona reads back
         as ``Agent.CustomPromptInterface``); Space/connector associations via
         :func:`compute_space_delta` sent as delta add/remove lists (``SpacesToAdd`` /
         ``SpacesToRemove``, ``ActionConnectorsToAdd`` / ``ActionConnectorsToRemove``,
-        Req 7.4); persona / ``StarterPrompts`` / ``WelcomeMessage`` are full-replacement
-        values (Req 7.5); and ``Name`` is included on EVERY ``UpdateAgent`` call because
-        the API requires it (Req 7.6). ``UpdateAgent`` has FULL-REPLACEMENT semantics
+); persona / ``StarterPrompts`` / ``WelcomeMessage`` are full-replacement
+        values; and ``Name`` is included on EVERY ``UpdateAgent`` call because
+        the API requires it. ``UpdateAgent`` has FULL-REPLACEMENT semantics
         (omitted configuration fields are cleared — observed live), so every update
         starts from the deployed configuration (including the ``Description``, which
         carries the CID-managed provenance marker written by :meth:`write_provenance`)
         and overrides only the managed fields. ``lifecycle`` is create-only:
         ``UpdateAgent`` does not accept it, so lifecycle drift is warned about and left
         unchanged. When nothing differs, no mutating API call is made and the agent is
-        reported up to date (Req 7.1, 7.2).
+        reported up to date.
 
         :param definition: agent definition from the catalog: keys ``name``, ``agentId``,
             ``description``, ``persona`` (5 camelCase fields), ``starterPrompts``,
@@ -444,10 +444,10 @@ class Agent(CidBase):
 
     def _create(self, agent_id, name, description, new_prompt, starter_prompts,
                 welcome_message, lifecycle, space_arns, connector_arns) -> dict:
-        """ CreateAgent carrying the full definition, then Space attach via UpdateAgent (Req 6.10, 7.8).
+        """ CreateAgent carrying the full definition, then Space attach via UpdateAgent.
 
         The CID-managed provenance marker is baked into the Description AT CREATE TIME
-        (Req 13.4): a post-create UpdateAgent marker write against the still-publishing
+: a post-create UpdateAgent marker write against the still-publishing
         agent spawns an overlapping publish workflow that corrupts the service-internal
         resource registry (duplicate ``PUBLISHED-<internalId>`` records — observed live
         as the console showing the linked Space "resources unavailable" and chat
@@ -494,7 +494,7 @@ class Agent(CidBase):
             arn = response.get('Arn')
         except self.client.exceptions.ResourceExistsException:
             # Another writer created the agent between our describe and create — the
-            # agent exists, which is what we wanted: treat as success (Req 7.8).
+            # agent exists, which is what we wanted: treat as success.
             logger.info(f'Agent {agent_id!r} already exists (ResourceExistsException). Treating as success.')
             arn = (self.get(agent_id) or {}).get('Arn')
         if space_arns:
@@ -509,7 +509,7 @@ class Agent(CidBase):
         CREATING/UPDATING agent), then issues one UpdateAgent with ``SpacesToAdd``
         carrying the full deployed configuration through (full-replacement semantics;
         ``Name`` required). Skips ARNs the agent already carries. A residual
-        ConflictException retries within the shared budget (Req 7.9 pattern).
+        ConflictException retries within the shared budget ( pattern).
         """
         agent = self.wait_settled(agent_id, timeout=timeout, interval=interval)
         if agent is None:
@@ -544,7 +544,7 @@ class Agent(CidBase):
 
     def _update(self, agent, agent_id, name, desired_persona, starter_prompts,
                 welcome_message, lifecycle, desired_spaces, desired_connectors) -> dict:
-        """ Drift-diffed UpdateAgent, or no-op when nothing changed (Req 7.1-7.6). """
+        """ Drift-diffed UpdateAgent, or no-op when nothing changed. """
         arn = agent.get('Arn')
         # Read shapes: persona reads back as CustomPromptInterface (write/read asymmetry);
         # Spaces/ActionConnectors read back as ARN-string lists; the read shape names the
@@ -575,7 +575,7 @@ class Agent(CidBase):
             'name': name is not None and name != deployed_name,
         }
         if not any(drift.values()):
-            # Desired configuration matches the deployed one: no API call (Req 7.1).
+            # Desired configuration matches the deployed one: no API call.
             logger.info(f'Agent {agent_id!r} is up to date. No change needed.')
             return {'agentId': agent_id, 'arn': arn, 'action': 'unchanged'}
 
@@ -587,9 +587,9 @@ class Agent(CidBase):
         # override only the managed fields.
         params = self._carry_through_update_params(agent, agent_id)
         if name is not None:
-            # UpdateAgent requires Name on EVERY call (Req 7.6).
+            # UpdateAgent requires Name on EVERY call.
             params['Name'] = name
-        # Full-replacement fields (Req 7.5): send the complete desired value.
+        # Full-replacement fields: send the complete desired value.
         new_prompt = self._persona_to_new_prompt(desired_persona)
         if new_prompt:
             params['CustomPromptInput'] = {'NewPrompt': new_prompt}
@@ -597,7 +597,7 @@ class Agent(CidBase):
             params['StarterPrompts'] = list(starter_prompts)
         if welcome_message is not None:
             params['WelcomeMessage'] = welcome_message
-        # Delta-based association fields (Req 7.4): add/remove lists, never a full replace.
+        # Delta-based association fields: add/remove lists, never a full replace.
         if spaces_to_add:
             params['SpacesToAdd'] = sorted(spaces_to_add)
         if spaces_to_remove:

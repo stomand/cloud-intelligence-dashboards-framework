@@ -69,7 +69,7 @@ def test_property_5_accepted_types_are_not_rejected(accepted_type):
     ('space', 'spaces'),
 ])
 def test_known_tokens_are_substituted(definition_type, resource_key):
-    """Req 4.2: ${var} tokens with matching parameters are replaced in agent/space definitions."""
+    """: ${var} tokens with matching parameters are replaced in agent/space definitions."""
     cid_obj = _make_cid(resources={resource_key: {
         'my-entry': {
             'name': 'my-entry',
@@ -87,7 +87,7 @@ def test_known_tokens_are_substituted(definition_type, resource_key):
     ('space', 'spaces'),
 ])
 def test_unresolved_token_raises_valueerror_naming_token(definition_type, resource_key):
-    """Req 4.3: an unresolved ${var} token in an agent/space definition raises ValueError naming it."""
+    """: an unresolved ${var} token in an agent/space definition raises ValueError naming it."""
     cid_obj = _make_cid(resources={resource_key: {
         'my-entry': {
             'name': 'my-entry',

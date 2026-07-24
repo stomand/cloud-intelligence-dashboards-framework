@@ -784,7 +784,7 @@ class Cid():
 
     # --- Quick Suite Agent platform: create-agent (prerequisite-only, never deploys) ---
 
-    # Deployment guidance pointers (Req 8.3, 8.5, 8.6, 19.1, 19.3, 19.5).
+    # Deployment guidance pointers.
     # These messages MUST NOT name any cid-cmd command.
     CID_DASHBOARDS_GUIDANCE = (
         'the Cloud Intelligence Dashboards (CID/CUDOS) foundational deployment guidance '
@@ -794,31 +794,30 @@ class Cid():
         'the separate CID Data Collection deployment guidance '
         '(https://catalog.workshops.aws/awscid/en-US/data-collection)'
     )
-    # QuickSight user roles entitled to create Quick Agents (Req 17.4)
+    # QuickSight user roles entitled to create Quick Agents
     AGENT_AUTHOR_PRO_ROLES = ('AUTHOR_PRO', 'ADMIN_PRO')
 
     @command
     def create_agent(self, agent_id: str=None, space_name: str=None, **kwargs):
         """Create or update a Quick Agent and its knowledge Space over already-deployed dashboards.
 
-        Prerequisite-only flow (Req 6): never deploys a dashboard, never creates
+        Prerequisite-only flow: never deploys a dashboard, never creates
         a dataset, and never touches the data layer (CUR, Data Exports, Data Collection).
-        Missing prerequisites are resolved by guidance, not by deployment (Req 8).
-        The --delete-space flag is accepted for CLI symmetry but is not applicable here.
+        Missing prerequisites are resolved by guidance, not by deployment.
         """
-        # 0. gen-AI availability pre-check (Req 17.5): create nothing when unavailable
+        # 0. gen-AI availability pre-check: create nothing when unavailable
         self._check_genai_availability()
-        # 1. DETECT-AND-REQUIRE Enterprise subscription, read-only (Req 6.1, 6.15)
+        # 1. DETECT-AND-REQUIRE Enterprise subscription, read-only
         self._verify_enterprise_subscription()
-        # 2-3. resolve the agent id (picker when absent, Req 6.2) and its definition
+        # 2-3. resolve the agent id (picker when absent) and its definition
         agent_key, definition = self._resolve_agent_definition(agent_id)
-        # 4. stored default parameters keyed by the agent id (Req 6.3)
+        # 4. stored default parameters keyed by the agent id
         self._load_agent_default_parameters(agent_key)
-        # 5. cap validation before any CreateAgent call (Req 10.1-10.7)
+        # 5. cap validation before any CreateAgent call
         validate_caps(definition)
-        # 6. owner principal: registered QuickSight user with Author Pro (Req 17.4, 17.7)
+        # 6. owner principal: registered QuickSight user with Author Pro
         principal_arn = self._resolve_quicksight_principal()
-        # 7. read-only dependency pre-flight — NEVER deploys (Req 8.2-8.9, 19.1-19.5)
+        # 7. read-only dependency pre-flight — NEVER deploys
         dependencies = self._preflight_agent_dependencies(definition)
 
         target_agent_id = definition['agentId']
@@ -826,11 +825,11 @@ class Cid():
         remove_stale = bool(get_parameters().get('cleanup-space'))
         access_denied = self.space.client.exceptions.AccessDeniedException
         try:
-            # 8. resolve the target Space (Req 6.5, 9.1-9.7, 13.3)
+            # 8. resolve the target Space
             space_id, space_arn = self._resolve_agent_space(definition, space_name, principal_arn)
-            # 9. add missing resources for the PRESENT dashboards only (Req 6.6-6.8, 9.2, 9.4)
+            # 9. add missing resources for the PRESENT dashboards only
             managed_arns = None
-            if remove_stale:  # opt-in, scoped stale removal (Req 9.5, 12.6)
+            if remove_stale:  # opt-in, scoped stale removal
                 deployed_by_id = dependencies['deployed_dashboard_arns_by_id']
                 managed_arns = (
                     self._cid_managed_dashboard_arns(deployed_by_id)
@@ -840,12 +839,12 @@ class Cid():
                 space_id, dependencies['dashboard_arns'],
                 resource_type='DASHBOARD', remove_stale=remove_stale, managed_arns=managed_arns,
             )
-            # dataset knowledge: attach only PRESENT dataset ARNs, never create (Req 8.8, 8.9)
+            # dataset knowledge: attach only PRESENT dataset ARNs, never create
             if dependencies['dataset_arns']:
                 self.space.update_resources(space_id, dependencies['dataset_arns'], resource_type='DATA_SET')
-            # 10. optional pre-existing knowledge bases; never create a KB (Req 16.1-16.4)
+            # 10. optional pre-existing knowledge bases; never create a KB
             self._attach_knowledge_bases(space_id, dependencies['knowledge_base_arns'])
-            # 11. conflict guard via DescribeAgent — never ListAgents (Req 13.1, 13.2)
+            # 11. conflict guard via DescribeAgent — never ListAgents
             existing_agent = self.agent.get(target_agent_id)
             if existing_agent is not None and not self._agent_is_cid_managed(existing_agent):
                 raise CidError(
@@ -856,24 +855,24 @@ class Cid():
             try:
                 result = self.agent.create_or_update(definition, [space_arn])
             except access_denied:
-                raise  # no further create/modify (incl. cleanup) after AccessDenied (Req 17.6)
+                raise  # no further create/modify (incl. cleanup) after AccessDenied
             except (CidError, CidCritical):
                 raise
             except Exception:
                 if existing_agent is None:
                     # cleanup-on-failure: best-effort delete of the partially created agent,
-                    # then re-raise; delete retries through ConflictException (Req 7.7, 7.9)
+                    # then re-raise; delete retries through ConflictException
                     try:
                         self.agent.delete(target_agent_id)
                     except Exception as cleanup_exc:
                         logger.warning(f'Cleanup of partially created agent {target_agent_id!r} failed: {cleanup_exc}')
                 raise
             if result.get('action') == 'created' and result.get('arn'):
-                # dual provenance write: tag (tolerated failure) + Description marker (Req 13.4)
+                # dual provenance write: tag (tolerated failure) + Description marker
                 self.agent.write_provenance(result['arn'], target_agent_id)
-            # 12. owner grant: the 5-action bundle as one set (Req 6.11)
+            # 12. owner grant: the 5-action bundle as one set
             self.agent.grant_owner(target_agent_id, principal_arn)
-            # 13. PUBLISHED lifecycle: wait for ACTIVE; fail fast on FAILED (Req 6.12, 6.13, 5.8)
+            # 13. PUBLISHED lifecycle: wait for ACTIVE; fail fast on FAILED
             if str(definition.get('lifecycle') or '').upper() == 'PUBLISHED':
                 self.agent.wait_active(target_agent_id)
         except access_denied as exc:
@@ -884,7 +883,7 @@ class Cid():
                 'missing permission and re-run.'
             ) from exc
 
-        # 14. persist parameters keyed by the agent id + print the console URL (Req 6.14, 17.3)
+        # 14. persist parameters keyed by the agent id + print the console URL
         self._dump_agent_default_parameters(agent_key)
         console_url = build_console_url(
             self.base.account_id, self.base.region, self.base.partition, self.base.domain,
@@ -899,7 +898,7 @@ class Cid():
         return target_agent_id
 
     def _check_genai_availability(self):
-        """Verify the Quick Suite gen-AI operations are available before creating anything (Req 17.5)."""
+        """Verify the Quick Suite gen-AI operations are available before creating anything."""
         mapping = getattr(self.space.client.meta, 'method_to_api_mapping', None) or {}
         if 'create_space' not in mapping or 'create_agent' not in mapping:
             raise CidCritical(
@@ -911,7 +910,7 @@ class Cid():
             )
 
     def _verify_enterprise_subscription(self):
-        """Read-only DETECT-AND-REQUIRE of QuickSight Enterprise (Req 6.1, 6.15).
+        """Read-only DETECT-AND-REQUIRE of QuickSight Enterprise.
 
         NEVER activates, enables, or modifies a subscription (unlike Cid.ensure_subscription,
         which offers activation) — billing is the customer's explicit action.
@@ -927,10 +926,10 @@ class Cid():
             ) from exc
 
     def _deployed_agent_ids(self) -> set:
-        """Enumerate deployed agent ids via read-only ListAgents (enumeration only, Req 6.2).
+        """Enumerate deployed agent ids via read-only ListAgents (enumeration only).
 
         ListAgents omits PREVIEW/FAILED agents, so this is used solely for the picker's
-        check indicator; existence checks use DescribeAgent (Req 13.1). Failures are
+        check indicator; existence checks use DescribeAgent. Failures are
         tolerated: the picker then simply shows no check indicators.
         """
         ids = set()
@@ -956,14 +955,14 @@ class Cid():
         """Resolve the agent id (category-grouped picker when absent) and load its definition.
 
         Returns (agent_key, definition) where definition is a copy of the catalog entry
-        with the persona loaded inline (Req 6.2, 6.3, 17.1, 17.2).
+        with the persona loaded inline.
         """
         agents_catalog = self.resources.get('agents') or {}
         if not agents_catalog:
             raise CidError('No agents found in the catalog.')
         agent_key = agent_id or get_parameters().get('agent-id')
         if not agent_key:
-            # category-grouped picker: ✓ deployed via ListAgents, hide Deprecated (Req 6.2)
+            # category-grouped picker: ✓ deployed via ListAgents, hide Deprecated
             listing = build_agent_listing(agents_catalog, self._deployed_agent_ids())
             agent_options = {}
             for category, entries in listing.items():
@@ -978,7 +977,7 @@ class Cid():
                         choices=agent_options,
                     )
                 except Exception as exc:
-                    # non-interactive with no value/default (Req 17.2): name the missing input
+                    # non-interactive with no value/default: name the missing input
                     raise CidCritical(
                         "Required input 'agent-id' has no supplied value, stored default, or "
                         'fallback in a non-interactive environment. Please provide --agent-id.'
@@ -1011,7 +1010,7 @@ class Cid():
             return persona
         persona_file = definition.get('personaFile')
         if not persona_file:
-            return None  # validate_caps reports the missing required 'persona' field (Req 10.5)
+            return None  # validate_caps reports the missing required 'persona' field
         try:
             content = yaml.safe_load(self.load_text_file(persona_file, parent_source=definition.get('source')))
         except Exception as exc:
@@ -1021,7 +1020,7 @@ class Cid():
         return content
 
     def _agent_parameter_store_ready(self) -> bool:
-        """Resolve the Athena database/workgroup for the agent Parameter_Store (Req 20).
+        """Resolve the Athena database/workgroup for the agent Parameter_Store.
 
         The Parameter_Store (``parameters_controller`` over the ``cid_parameters`` view)
         queries Athena, and the Athena helper's ``DatabaseName``/``WorkGroup`` getters
@@ -1030,37 +1029,37 @@ class Cid():
         create data-layer resources, so this guard resolves both non-interactively (or
         skips the store entirely). The outcome is computed at most once per command
         invocation and reused by every subsequent Parameter_Store load and persist
-        (Req 20.3). The Athena helper itself and all non-agent commands keep their
-        existing resolution behavior untouched (Req 20.5).
+. The Athena helper itself and all non-agent commands keep their
+        existing resolution behavior untouched.
 
         :returns: True when the Parameter_Store can be used without prompting;
-            False when all load/persist operations must be skipped (Req 20.4)
+            False when all load/persist operations must be skipped
         """
         if getattr(self, '_agent_pstore_ready', None) is None:
             self._agent_pstore_ready = self._resolve_agent_parameter_store()
         return self._agent_pstore_ready
 
     def _resolve_agent_parameter_store(self) -> bool:
-        """Run the guarded, read-only resolution chain for the agent Parameter_Store (Req 20).
+        """Run the guarded, read-only resolution chain for the agent Parameter_Store.
 
         1. ``athena-database`` resolved in the session (parameter set, or the Athena
-           helper's ``_DatabaseName`` already materialized) -> used unchanged (Req 20.1).
+           helper's ``_DatabaseName`` already materialized) -> used unchanged.
         2. Otherwise read-only inference (no DDL, no create/modify): the well-known CID
            database names (``cid_cur``, ``cid_data_export``) present in the Athena
            catalog, else the majority database referenced by deployed CID datasets'
-           physical table maps (Req 20.2, 20.7).
+           physical table maps.
         3. The workgroup resolves non-interactively only: the explicit
            ``athena-workgroup`` parameter (or an already-materialized ``_WorkGroup``),
            else the Athena helper's default workgroup when it is usable as-is (exists,
            enabled, output location configured) — the interactive workgroup prompt is
-           never displayed (Req 20.8).
+           never displayed.
 
         Any failure (no candidate database, AccessDenied/client error on a lookup, or
         an unusable default workgroup) skips the Parameter_Store for the invocation
-        with a single debug log; nothing is prompted for or created (Req 20.4).
+        with a single debug log; nothing is prompted for or created.
         """
         try:
-            # session-resolved (Req 20.1): parameter set, or _DatabaseName already materialized
+            # session-resolved: parameter set, or _DatabaseName already materialized
             # (identity check only — never invokes anything on the Athena helper)
             database_resolved = bool(get_parameters().get('athena-database')) \
                 or getattr(self.athena, '_DatabaseName', None) is not None
@@ -1068,13 +1067,13 @@ class Cid():
                 database = self._infer_agent_athena_database()
                 if not database:
                     raise CidError('no candidate Athena database was found in the account')
-                # honored by the Athena helper's DatabaseName getter without any prompt (Req 20.3)
+                # honored by the Athena helper's DatabaseName getter without any prompt
                 set_parameters({'athena-database': database})
             workgroup_resolved = bool(get_parameters().get('athena-workgroup')) \
                 or getattr(self.athena, '_WorkGroup', None) is not None
             if not workgroup_resolved:
                 default_workgroup = str(self.athena.defaults.get('WorkGroup'))
-                # read-only usability check: never create or reconfigure a workgroup (Req 20.4, 20.8)
+                # read-only usability check: never create or reconfigure a workgroup
                 workgroup = self.athena.client.get_work_group(WorkGroup=default_workgroup).get('WorkGroup', {})
                 if workgroup.get('State') == 'DISABLED' \
                     or not workgroup.get('Configuration', {}).get('ResultConfiguration', {}).get('OutputLocation'):
@@ -1082,7 +1081,7 @@ class Cid():
                 set_parameters({'athena-workgroup': default_workgroup})
             return True
         except Exception as exc:
-            # the single per-invocation debug log of the skip (Req 20.4)
+            # the single per-invocation debug log of the skip
             logger.debug(
                 f'Skipping the agent parameter store for this invocation: {exc}. '
                 'The command completes normally without stored defaults.'
@@ -1090,15 +1089,15 @@ class Cid():
             return False
 
     def _infer_agent_athena_database(self) -> str | None:
-        """Infer the Athena database from the existing CID deployment, read-only (Req 20.2).
+        """Infer the Athena database from the existing CID deployment, read-only.
 
         Candidates are evaluated in order: (a) the well-known CID database names
         (``cid_cur``, then ``cid_data_export``) when present in the Athena catalog;
         (b) the databases referenced by deployed CID datasets' physical table maps
         (``Dataset.schemas``), selected by majority with ascending lexicographic
-        tie-break via :func:`select_database_from_candidates` (Req 20.7). Issues only
+        tie-break via :func:`select_database_from_candidates`. Issues only
         read-only API calls; lookup errors propagate to the caller's single-skip
-        handling (Req 20.4).
+        handling.
         """
         # (a) well-known CID database names, checked against the default catalog to avoid
         # the CatalogName getter (which can prompt when multiple catalogs exist)
@@ -1120,9 +1119,9 @@ class Cid():
         return selected
 
     def _load_agent_default_parameters(self, agent_key: str):
-        """Load stored default parameters keyed by the agent id (Req 6.3). Best-effort."""
+        """Load stored default parameters keyed by the agent id. Best-effort."""
         if not self._agent_parameter_store_ready():
-            return  # skip silently, never prompt or create; the resolver logged the skip once (Req 20.4)
+            return  # skip silently, never prompt or create; the resolver logged the skip once
         try:
             defaults = self.parameters_controller.load_parameters(context=agent_key)
         except Exception as exc:
@@ -1133,9 +1132,9 @@ class Cid():
             set_defaults(defaults)
 
     def _dump_agent_default_parameters(self, agent_key: str):
-        """Persist the resolved parameters keyed by the agent id (Req 6.14). Best-effort."""
+        """Persist the resolved parameters keyed by the agent id. Best-effort."""
         if not self._agent_parameter_store_ready():
-            return  # skip silently, never prompt or create; the resolver logged the skip once (Req 20.4)
+            return  # skip silently, never prompt or create; the resolver logged the skip once
         stop_list = ['profile-name', 'region', 'aws-access-key-id', 'aws-secret-access-key', 'aws-session-token', 'athena-database', 'athena-workgroup']
         current_parameters = get_parameters()
         for key in list(current_parameters.keys()):
@@ -1147,11 +1146,11 @@ class Cid():
             logger.debug(f'Could not persist parameters for {agent_key!r}: {exc}')
 
     def _resolve_quicksight_principal(self) -> str:
-        """Resolve the owner principal ARN before any grant (Req 6.9, 6.11, 17.4, 17.7).
+        """Resolve the owner principal ARN before any grant.
 
         Resolution order: --quicksight-group, --quicksight-user, then the caller identity.
-        The principal must be registered in QuickSight (Req 17.7); user principals must
-        additionally carry an Author Pro role to create Quick Agents (Req 17.4 — the role
+        The principal must be registered in QuickSight; user principals must
+        additionally carry an Author Pro role to create Quick Agents ( — the role
         check is not applicable to groups).
         """
         group_name = get_parameters().get('quicksight-group')
@@ -1189,7 +1188,7 @@ class Cid():
         """Collect dependency keys from the agent manifest and every catalog Space it references.
 
         Returns (required_dashboards, optional_dashboards, datasets, knowledge_base_arns)
-        preserving declaration order, de-duplicated (Req 8.1, 8.8, 16.2).
+        preserving declaration order, de-duplicated.
         """
         required, optional, datasets, knowledge_bases = [], [], [], []
         depends_sources = [definition.get('dependsOn') or {}]
@@ -1213,14 +1212,14 @@ class Cid():
         return required, optional, datasets, knowledge_bases
 
     def _preflight_agent_dependencies(self, definition: dict) -> dict:
-        """Read-only dependency pre-flight via ListDashboards — NEVER deploys (Req 8, 19).
+        """Read-only dependency pre-flight via ListDashboards — NEVER deploys.
 
         Resolves each dependency catalog key to its deployed dashboardId and takes that
-        dashboard's ARN from the ListDashboards response (no hand-built ARNs, Req 14.4).
-        Zero present dashboards raise the guidance CidError (Req 8.3, 19.1); otherwise
+        dashboard's ARN from the ListDashboards response (no hand-built ARNs).
+        Zero present dashboards raise the guidance CidError; otherwise
         the run proceeds with the present set and warns per missing dependency
-        (Req 8.5, 8.6, 19.3). Dataset dependencies are resolved read-only and only
-        present dataset ARNs are attached later (Req 8.8, 8.9).
+. Dataset dependencies are resolved read-only and only
+        present dataset ARNs are attached later.
         """
         required, optional, dataset_keys, knowledge_base_arns = self._collect_agent_dependency_keys(definition)
         # dashboardId -> Arn strictly from the read-only ListDashboards response
@@ -1257,7 +1256,7 @@ class Cid():
                 f'deployment — see {self.DATA_COLLECTION_GUIDANCE}. Proceeding with the available dashboards.'
             )
         present_dashboard_arns = [deployed_arns_by_id[key_to_dashboard_id[key]] for key in classification['present']]
-        # dataset knowledge presence via the existing read-only discovery (Req 8.8, 8.9)
+        # dataset knowledge presence via the existing read-only discovery
         present_dataset_arns = []
         for key in dataset_keys:
             arn = self._find_deployed_dataset_arn(key)
@@ -1277,7 +1276,7 @@ class Cid():
         }
 
     def _find_deployed_dataset_arn(self, dataset_key: str) -> str:
-        """Resolve a dataset catalog key to a deployed dataset ARN via read-only discovery (Req 8.9)."""
+        """Resolve a dataset catalog key to a deployed dataset ARN via read-only discovery."""
         datasets = self.qs.datasets  # ListDataSets, or dashboard-based discovery on AccessDenied
         catalog_entry = (self.resources.get('datasets') or {}).get(dataset_key) or {}
         catalog_data = catalog_entry.get('data')
@@ -1291,7 +1290,7 @@ class Cid():
         return None
 
     def _cid_managed_dashboard_arns(self, deployed_arns_by_id: dict) -> set:
-        """Deployed dashboard ARNs that belong to the CID catalog (stale-removal scope, Req 12.6)."""
+        """Deployed dashboard ARNs that belong to the CID catalog (stale-removal scope)."""
         managed = set()
         for entry in (self.resources.get('dashboards') or {}).values():
             arn = deployed_arns_by_id.get((entry or {}).get('dashboardId'))
@@ -1300,7 +1299,7 @@ class Cid():
         return managed
 
     def _arns_referenced_by_any_agent(self, deployed_arns_by_id: dict) -> set:
-        """Deployed dashboard ARNs still referenced by any catalog agent's dependencies (Req 12.6)."""
+        """Deployed dashboard ARNs still referenced by any catalog agent's dependencies."""
         referenced = set()
         dashboards_catalog = self.resources.get('dashboards') or {}
         for entry in (self.resources.get('agents') or {}).values():
@@ -1314,7 +1313,7 @@ class Cid():
         return referenced
 
     def _get_resource_tags(self, arn: str) -> dict:
-        """Read resource tags, tolerating failure (provenance detection input, Req 13.4)."""
+        """Read resource tags, tolerating failure (provenance detection input)."""
         if not arn:
             return {}
         try:
@@ -1325,20 +1324,20 @@ class Cid():
             return {}
 
     def _agent_is_cid_managed(self, agent: dict) -> bool:
-        """Dual-mechanism CID_Managed provenance detection for an Agent (Req 13.1, 13.4)."""
+        """Dual-mechanism CID_Managed provenance detection for an Agent."""
         return is_cid_managed(self._get_resource_tags(agent.get('Arn')), agent.get('Description'))
 
     def _resolve_agent_space(self, definition: dict, space_name: str, principal_arn: str) -> tuple:
         """Resolve or create the target Space; returns (space_id, space_arn).
 
-        Bring-your-own path (Req 9.1, 9.6, 9.7): --space NAME is resolved via SearchSpaces;
+        Bring-your-own path: --space NAME is resolved via SearchSpaces;
         multiple matches raise a CidError listing the ids; no match creates a Space with a
         deterministically derived id. Catalog path: the definition's dependsOn.spaces[0].
-        Pre-existing Spaces are reused ADDITIVELY (Req 9.2, 13.3): a non-CID Space is never
+        Pre-existing Spaces are reused ADDITIVELY: a non-CID Space is never
         renamed, re-described, tagged, or re-permissioned — only this agent's resources are
         added by the caller.
         """
-        if space_name:  # bring-your-own Space (Req 9.1)
+        if space_name:  # bring-your-own Space
             matching_ids = self.space.find_by_name(space_name)
             if len(matching_ids) > 1:
                 raise CidError(
@@ -1347,7 +1346,7 @@ class Cid():
                 )
             if matching_ids:
                 return self._reuse_existing_space(matching_ids[0], principal_arn)
-            space_id = derive_space_id(space_name)  # deterministic id from the name (Req 9.7)
+            space_id = derive_space_id(space_name)  # deterministic id from the name
             name = space_name
             description = None
         else:
@@ -1359,19 +1358,19 @@ class Cid():
                 )
             space_key = depends_spaces[0]
             space_definition = self.get_definition('space', name=space_key) or {}
-            space_id = derive_space_id(space_key)  # deterministic id from the catalog id (Req 9.7)
+            space_id = derive_space_id(space_key)  # deterministic id from the catalog id
             name = space_definition.get('name') or space_key
             description = space_definition.get('description')
             if self.space.get(space_id) is not None:
                 return self._reuse_existing_space(space_id, principal_arn, name=name, description=description)
         cid_print(f'Creating Space <BOLD>{space_id}<END>')
         space_arn = self.space.create_or_update(space_id, name, description=description)
-        self.space.write_provenance(space_arn, space_id)   # dual provenance write (Req 13.4)
-        self.space.grant_owner(space_id, principal_arn)    # 16-action owner set (Req 6.9)
+        self.space.write_provenance(space_arn, space_id)   # dual provenance write
+        self.space.grant_owner(space_id, principal_arn)    # 16-action owner set
         return space_id, space_arn
 
     def _reuse_existing_space(self, space_id: str, principal_arn: str, name: str=None, description: str=None) -> tuple:
-        """Reuse an existing Space (Req 6.5, 9.2, 13.3); returns (space_id, space_arn).
+        """Reuse an existing Space; returns (space_id, space_arn).
 
         CID-managed Spaces get the idempotent update + provenance + owner grant. Spaces
         lacking the CID_Managed provenance are reused strictly additively: no rename, no
@@ -1395,9 +1394,9 @@ class Cid():
         return space_id, space_arn
 
     def _attach_knowledge_bases(self, space_id: str, knowledge_base_arns: list):
-        """Attach pre-existing knowledge-base ARNs to the Space (Req 16.2, 16.3).
+        """Attach pre-existing knowledge-base ARNs to the Space.
 
-        Never creates a knowledge base or Research asset (Req 16.1, 16.4). Unresolvable
+        Never creates a knowledge base or Research asset. Unresolvable
         references are warned about and skipped; attach failures are reported by the
         Space helper and the deployment continues with the dashboards.
         """
@@ -1426,10 +1425,10 @@ class Cid():
         """List catalog agents grouped by category with live deployment status.
 
         Deployment status is determined per entry via live DescribeAgent by agent id
-        (Req 11.3) — never a local state file and never ListAgents, which omits agents
+ — never a local state file and never ListAgents, which omits agents
         in PREVIEW/FAILED states (ListAgents is enumeration-only). Entries in category
-        'Deprecated' are hidden (Req 11.4). A live-query failure marks that entry with
-        an unknown-status indicator and listing continues (Req 11.5).
+        'Deprecated' are hidden. A live-query failure marks that entry with
+        an unknown-status indicator and listing continues.
         """
         agents_catalog = self.resources.get('agents') or {}
         if not agents_catalog:
@@ -1440,22 +1439,22 @@ class Cid():
         for key, entry in agents_catalog.items():
             entry = entry if isinstance(entry, dict) else {}
             if str(entry.get('category') or '') == 'Deprecated':
-                continue  # hidden entries are never queried (Req 11.4)
+                continue  # hidden entries are never queried
             target_id = entry.get('agentId') or key
             try:
-                if self.agent.get(target_id) is not None:  # live DescribeAgent (Req 11.3)
+                if self.agent.get(target_id) is not None:  # live DescribeAgent
                     deployed_ids.add(target_id)
             except Exception as exc:
                 logger.debug(f'DescribeAgent failed for {target_id!r} ({exc}). Marking unknown status.')
-                unknown_ids.add(target_id)  # unknown status; continue with the rest (Req 11.5)
-        # category grouping, ✓ marking, Deprecated hidden, each entry once (Req 11.1, 11.2, 11.4)
+                unknown_ids.add(target_id)  # unknown status; continue with the rest
+        # category grouping, ✓ marking, Deprecated hidden, each entry once
         listing = build_agent_listing(agents_catalog, deployed_ids)
         for category, entries in listing.items():
             cid_print(f'\n<BOLD>{category}<END>')
             for entry in entries:
                 display = entry['display']
                 if entry['agentId'] in unknown_ids:
-                    # unknown-status indicator in place of the check mark (Req 11.5)
+                    # unknown-status indicator in place of the check mark
                     display = f" ?[{entry['agentId']}] {entry['name']}"
                 provided_by = (agents_catalog.get(entry['key']) or {}).get('providedBy')
                 suffix = f'  (provided by {provided_by})' if provided_by else ''
@@ -1466,15 +1465,15 @@ class Cid():
 
     @command
     def delete_agent(self, agent_id: str=None, **kwargs):
-        """Delete a CID-managed Quick Agent (Req 12). NEVER deletes any dashboard (Req 12.3).
+        """Delete a CID-managed Quick Agent. NEVER deletes any dashboard.
 
-        Deletion is gated by a yes/no confirmation defaulting to 'no' (Req 12.1), a
-        missing target is treated as success (Req 12.2), targets lacking the
-        CID_Managed provenance are refused (Req 12.7), and the delete retries through
-        ConflictException while the agent settles (Req 12.8, in the Agent helper).
+        Deletion is gated by a yes/no confirmation defaulting to 'no', a
+        missing target is treated as success, targets lacking the
+        CID_Managed provenance are refused, and the delete retries through
+        ConflictException while the agent settles (, in the Agent helper).
         --delete-space removes the agent's Space only when no other CID-managed agent
-        references it (Req 12.4, 12.5); --cleanup-space removes only
-        CID-managed, unreferenced dashboard resources (Req 12.6).
+        references it; --cleanup-space removes only
+        CID-managed, unreferenced dashboard resources.
         """
         agents_catalog = self.resources.get('agents') or {}
         agent_key = agent_id or get_parameters().get('agent-id')
@@ -1496,7 +1495,7 @@ class Cid():
                         choices=agent_options,
                     )
                 except Exception as exc:
-                    # non-interactive with no value/default: name the missing input (Req 17.2)
+                    # non-interactive with no value/default: name the missing input
                     raise CidCritical(
                         "Required input 'agent-id' has no supplied value, stored default, or "
                         'fallback in a non-interactive environment. Please provide --agent-id.'
@@ -1515,19 +1514,19 @@ class Cid():
             )
         target_agent_id = (definition or {}).get('agentId') or agent_key
 
-        # missing target = success (Req 12.2); existence via DescribeAgent, not ListAgents
+        # missing target = success; existence via DescribeAgent, not ListAgents
         existing = self.agent.get(target_agent_id)
         if existing is None:
             cid_print(f'Agent <BOLD>{target_agent_id}<END> does not exist. Nothing to delete.')
             return target_agent_id
-        # refuse targets lacking the CID_Managed provenance — no delete call (Req 12.7)
+        # refuse targets lacking the CID_Managed provenance — no delete call
         if not self._agent_is_cid_managed(existing):
             raise CidError(
                 f'The agent {target_agent_id!r} exists but is not managed by Cloud Intelligence '
                 'Dashboards (no CID_Managed provenance). Refusing to delete it. Please remove it '
                 'manually if that is really what you want.'
             )
-        # confirmation via yes/no parameter defaulting to 'no' (Req 12.1); -y/--yes confirms
+        # confirmation via yes/no parameter defaulting to 'no'; -y/--yes confirms
         if not get_yesno_parameter(
                 param_name='confirm-delete',
                 message=f'Delete the agent {target_agent_id!r}? (no dashboard will be deleted)',
@@ -1536,8 +1535,8 @@ class Cid():
             return target_agent_id
 
         agent_space_arns = [str(arn) for arn in existing.get('Spaces') or []]
-        # the Agent helper retries through ConflictException while the agent settles (Req 12.8)
-        # and only calls DeleteAgent — no dashboard is ever deleted (Req 12.3)
+        # the Agent helper retries through ConflictException while the agent settles
+        # and only calls DeleteAgent — no dashboard is ever deleted
         self.agent.delete(target_agent_id)
         cid_print(f'Agent <BOLD>{target_agent_id}<END> deleted. No dashboard was deleted.')
 
@@ -1548,7 +1547,7 @@ class Cid():
                 if self._delete_agent_space(space_id, target_agent_id):
                     retained_space_ids.discard(space_id)
         if get_parameters().get('cleanup-space') and retained_space_ids:
-            # scoped removal: CID-managed AND unreferenced by any agent's dependencies (Req 12.6)
+            # scoped removal: CID-managed AND unreferenced by any agent's dependencies
             deployed_arns_by_id = {}
             for summary in self.qs.list_dashboards():
                 if summary.get('DashboardId') and summary.get('Arn'):
@@ -1567,7 +1566,7 @@ class Cid():
         return target_agent_id
 
     def _agent_space_ids(self, definition: dict, space_arns: list) -> set:
-        """Space ids of an agent: catalog `dependsOn.spaces` + the deployed Spaces list (Req 12.4)."""
+        """Space ids of an agent: catalog `dependsOn.spaces` + the deployed Spaces list."""
         space_ids = set()
         for space_key in ((definition or {}).get('dependsOn') or {}).get('spaces') or []:
             space_ids.add(derive_space_id(space_key))
@@ -1577,7 +1576,7 @@ class Cid():
         return space_ids
 
     def _space_dependent_agents(self, space_id: str, exclude_agent_id: str) -> list:
-        """Other deployed, CID-managed catalog agents that reference the Space (Req 12.4, 12.5).
+        """Other deployed, CID-managed catalog agents that reference the Space.
 
         A reference is either the deployed agent's Spaces list containing the Space or
         the agent's catalog `dependsOn.spaces` deriving to the same space id.
@@ -1608,7 +1607,7 @@ class Cid():
         return dependents
 
     def _delete_agent_space(self, space_id: str, deleted_agent_id: str) -> bool:
-        """Delete the agent's Space unless another CID-managed agent references it (Req 12.4, 12.5).
+        """Delete the agent's Space unless another CID-managed agent references it.
 
         Never deletes a Space lacking the CID_Managed provenance (delete-agent manages
         CID-managed resources only). Returns True when the Space is gone (deleted or
