@@ -34,6 +34,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ./
+      - name: Install Test Dependencies
+        run: |
+          pip install -e '.[test]'
+      - name: Run Python Unit Tests
+        run: |
+          # test_csv2view.py is excluded because it requires live AWS credentials,
+          # which are not available to this step.
+          pytest cid/test/python/ --ignore=cid/test/python/test_csv2view.py
       - name: configure aws credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:

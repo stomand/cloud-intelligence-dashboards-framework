@@ -108,6 +108,47 @@ cid-cmd create-cur-proxy -vv \
 ```
 
 
+#### Create Quick Agent
+Create or update a Quick Agent (an AI advisor) and its knowledge Space over CID dashboards that are **already deployed**. This command never deploys dashboards and never provisions the data layer (CUR, Data Exports, Data Collection). When required dashboards are missing it points to the existing CID/CUDOS and Data Collection deployment guidance instead of deploying anything. See the [create-agent command reference](docs/cid-cmd.md#create-agent) for details.
+
+```bash
+cid-cmd create-agent
+```
+
+Create Agent Command Options:
+```
+ --agent-id TEXT                   Agent id from the catalog (a category-grouped picker is shown when omitted)
+ --space TEXT                      Name of a Space to use instead of the per-agent default Space (bring-your-own Space)
+ --delete-space                    Not applicable for create-agent (reserved; accepted for symmetry with delete-agent)
+ --cleanup-space    Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies
+```
+
+Example with a bring-your-own Space:
+```bash
+cid-cmd create-agent --agent-id finops --space 'My Team Space'
+```
+
+#### List Quick Agents
+List catalog agents grouped by category with live deployment status. Deployed agents are marked with a check indicator; entries in category `Deprecated` are hidden.
+
+```bash
+cid-cmd list-agents
+```
+
+#### Delete Quick Agent
+Delete a CID-managed Quick Agent. Deletion is gated by a yes/no confirmation defaulting to `no`, refuses agents that were not created by CID, and never deletes any dashboard.
+
+```bash
+cid-cmd delete-agent --agent-id finops
+```
+
+Delete Agent Command Options:
+```
+ --agent-id TEXT                   Agent id to delete
+ --delete-space                    Also delete the Agent's Space when no other CID-managed agent depends on it
+ --cleanup-space    Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies
+```
+
 #### Delete Dashboard and all dependencies unused by other
 Delete Dashboards and all dependencies unused by other CID-managed dashboards.(including QuickSight datasets, Athena views and tables)
 ```bash

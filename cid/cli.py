@@ -305,6 +305,72 @@ def create_cur_proxy(ctx, cur_version, fields, **kwargs):
     ctx.obj.create_cur_proxy(cur_version=cur_version, fields=fields, **kwargs)
 
 
+@click.option('--agent-id', help='Agent id from the catalog', default=None)
+@click.option('--space', 'space_name', help='Name of a Space to use instead of the per-agent default Space', default=None)
+@click.option('--delete-space', help='Not applicable for create-agent (reserved; accepted for symmetry with delete-agent)', is_flag=True, default=None)
+@click.option('--cleanup-space', help='Remove CID-managed Space resources no longer referenced by any agent', is_flag=True, default=None)
+@click.option('-v', '--verbose', count=True)
+@click.option('-y', '--yes', help='confirm all', is_flag=True, default=False)
+@cid_command
+def create_agent(ctx, **kwargs):
+    """Create or update a Quick Agent and its Space over already-deployed CID dashboards.
+
+    This command never deploys dashboards and never provisions the data layer
+    (CUR, Data Exports, Data Collection). It builds a Space over dashboards
+    that are already deployed and publishes an Agent on top of it.
+
+    \b
+    Command options:
+     --agent-id TEXT                       Agent id from the catalog (a category-grouped picker is shown when omitted)
+     --space TEXT                          Name of a Space to use instead of the per-agent default Space (bring-your-own Space)
+     --delete-space                        Not applicable for create-agent (reserved; accepted for symmetry with delete-agent)
+     --cleanup-space        Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies
+     -v, --verbose                         Increase log verbosity (repeatable)
+     -y, --yes                             Confirm all prompts (non-interactive mode)
+    """
+    ctx.obj.create_agent(**kwargs)
+
+
+@click.option('-v', '--verbose', count=True)
+@click.option('-y', '--yes', help='confirm all', is_flag=True, default=False)
+@cid_command
+def list_agents(ctx, **kwargs):
+    """List catalog agents grouped by category with live deployment status.
+
+    Deployed agents are marked with a check indicator; entries in category
+    'Deprecated' are hidden.
+
+    \b
+    Command options:
+     -v, --verbose                         Increase log verbosity (repeatable)
+     -y, --yes                             Confirm all prompts (non-interactive mode)
+    """
+    ctx.obj.list_agents(**kwargs)
+
+
+@click.option('--agent-id', help='Agent id to delete', default=None)
+@click.option('--delete-space', help='Also delete the Agent Space if no other CID-managed agent depends on it', is_flag=True, default=None)
+@click.option('--cleanup-space', help='Remove CID-managed Space resources no longer referenced by any agent', is_flag=True, default=None)
+@click.option('-v', '--verbose', count=True)
+@click.option('-y', '--yes', help='confirm all', is_flag=True, default=False)
+@cid_command
+def delete_agent(ctx, **kwargs):
+    """Delete a CID-managed Quick Agent (never deletes dashboards).
+
+    Deletion is gated by a yes/no confirmation defaulting to 'no' and refuses
+    targets that are not CID-managed.
+
+    \b
+    Command options:
+     --agent-id TEXT                       Agent id to delete
+     --delete-space                        Also delete the Agent's Space when no other CID-managed agent depends on it
+     --cleanup-space        Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies
+     -v, --verbose                         Increase log verbosity (repeatable)
+     -y, --yes                             Confirm all prompts (non-interactive mode)
+    """
+    ctx.obj.delete_agent(**kwargs)
+
+
 @click.option('-v', '--verbose', count=True)
 @click.option('-y', '--yes', help='confirm all', is_flag=True, default=False)
 @cid_command
