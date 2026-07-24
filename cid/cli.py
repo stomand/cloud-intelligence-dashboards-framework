@@ -322,9 +322,7 @@ def create_agent(ctx, **kwargs):
     Command options:
      --agent-id TEXT                       Agent id from the catalog (a category-grouped picker is shown when omitted)
      --space TEXT                          Name of a Space to use instead of the per-agent default Space (bring-your-own Space)
-     --cleanup-space        Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies
-     -v, --verbose                         Increase log verbosity (repeatable)
-     -y, --yes                             Confirm all prompts (non-interactive mode)
+     --cleanup-space                       Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies
     """
     ctx.obj.create_agent(**kwargs)
 
@@ -337,11 +335,6 @@ def list_agents(ctx, **kwargs):
 
     Deployed agents are marked with a check indicator; entries in category
     'Deprecated' are hidden.
-
-    \b
-    Command options:
-     -v, --verbose                         Increase log verbosity (repeatable)
-     -y, --yes                             Confirm all prompts (non-interactive mode)
     """
     ctx.obj.list_agents(**kwargs)
 
@@ -362,9 +355,7 @@ def delete_agent(ctx, **kwargs):
     Command options:
      --agent-id TEXT                       Agent id to delete
      --delete-space                        Also delete the Agent's Space when no other CID-managed agent depends on it
-     --cleanup-space        Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies
-     -v, --verbose                         Increase log verbosity (repeatable)
-     -y, --yes                             Confirm all prompts (non-interactive mode)
+     --cleanup-space                       Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies
     """
     ctx.obj.delete_agent(**kwargs)
 
