@@ -1,25 +1,15 @@
-"""Mock-based unit tests and property tests for the ``create_agent`` handler.
+""" Tests for the create-agent / delete-agent / list-agents command flows.
 
-Feature: cid-cmd-agent-flow-platform (tasks 9.4 - 9.12)
-
-The handler under test is ``Cid.create_agent`` in ``cid/common.py``. Tests call the
-UNDECORATED handler via ``Cid.create_agent.__wrapped__`` (the ``@command`` decorator
-uses ``functools.wraps``), so no AWS login or catalog loading is performed.
-
-Harness: ``Cid.__new__(Cid)`` with injected ``resources``, a fake ``base``
-(SimpleNamespace), and MagicMock ``qs`` / ``space`` / ``agent`` /
-``parameters_controller`` helpers written into ``__dict__`` to preempt the
-``cached_property`` descriptors. Real exception subclasses are attached to the
-mocked client ``exceptions`` namespaces. No real AWS call is ever made.
+Each command is exercised through its UNDECORATED handler (``Cid.<cmd>.__wrapped__``)
+with mocked qs/space/agent helpers.
 """
+
 import io
 import contextlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-
 import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st
-
 import cid.utils as cid_utils
 from cid.common import Cid
 from cid.exceptions import CidError, CidCritical
@@ -28,24 +18,52 @@ from cid.helpers.quicksight.agent_logic import (
     CID_PROVENANCE_TAG_KEY,
     CID_PROVENANCE_TAG_VALUE,
 )
+from cid.exceptions import CidError
+from unittest.mock import MagicMock
+from cid.helpers.quicksight.agent_logic import DEPLOYED_MARK
+
+
+# ======================================================================
+# from test_create_agent_flow.py
+# ======================================================================
+
 
 ACCOUNT_ID = '123456789012'
+
+
 REGION = 'us-east-1'
+
+
 PARTITION = 'aws'
+
+
 DOMAIN = 'aws.amazon.com'
+
+
 USERNAME = 'test-user'
+
+
 USER_ARN = f'arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:user/default/{USERNAME}'
+
+
 AGENT_ID = 'test-agent'
+
+
 SPACE_KEY = 'test-space'
+
+
 SPACE_ARN = f'arn:{PARTITION}:quicksight:{REGION}:{ACCOUNT_ID}:space/{SPACE_KEY}'
+
+
 AGENT_ARN = f'arn:{PARTITION}:quicksight:{REGION}:{ACCOUNT_ID}:agent/{AGENT_ID}'
 
-# the undecorated handler (the @command decorator uses functools.wraps)
+
 create_agent = Cid.create_agent.__wrapped__
 
-# qs methods a prerequisite-only create-agent run may legitimately call (read-only)
+
 QS_READ_ONLY_ALLOWED = {'ensure_subscription', 'describe_user', 'describe_group', 'list_dashboards'}
-# agent-helper methods that mutate the target agent
+
+
 AGENT_MUTATING_METHODS = ('create_or_update', 'delete', 'grant_owner', 'write_provenance', 'wait_active')
 
 
@@ -127,7 +145,7 @@ def make_definition(required=(), optional=(), datasets=(), knowledge_bases=(),
     }
 
 
-def make_cid(definition, present=(), present_datasets=(), user_role='AUTHOR_PRO',
+def make_create_cid(definition, present=(), present_datasets=(), user_role='AUTHOR_PRO',
              existing_agent=None, resource_tags=()):
     """Build a Cid harness with mocked qs/space/agent/parameters_controller.
 
@@ -196,7 +214,7 @@ def make_cid(definition, present=(), present_datasets=(), user_role='AUTHOR_PRO'
     return cid_obj
 
 
-def run(cid_obj, **kwargs):
+def run_create(cid_obj, **kwargs):
     """Run the undecorated handler capturing stdout; returns (result, output)."""
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
@@ -204,7 +222,7 @@ def run(cid_obj, **kwargs):
     return result, buffer.getvalue()
 
 
-def run_raising(cid_obj, exception_type, **kwargs):
+def run_create_raising(cid_obj, exception_type, **kwargs):
     """Run the handler expecting an exception; returns (excinfo, output)."""
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
@@ -239,26 +257,23 @@ def assert_no_deploy_or_data_layer_calls(cid_obj):
         assert not helper.mock_calls, f'data-layer helper {sentinel!r} must never be touched: {helper.mock_calls}'
 
 
-# ===========================================================================
-# Task 9.4: mock-based unit tests for the create flow
-# ===========================================================================
 class TestErrorPropagation:
     """: CidError/CidCritical propagate cleanly out of the handler."""
 
     def test_cid_error_from_helper_propagates_unchanged(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         original = CidError('helper-level error')
         cid_obj.agent.create_or_update.side_effect = original
-        excinfo, _ = run_raising(cid_obj, CidError, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, CidError, agent_id=AGENT_ID)
         assert excinfo.value is original
         # CidError is re-raised directly, not routed through cleanup
         assert not cid_obj.agent.delete.called
 
     def test_cid_critical_from_helper_propagates_unchanged(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         original = CidCritical('critical helper error')
         cid_obj.agent.create_or_update.side_effect = original
-        excinfo, _ = run_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
         assert excinfo.value is original
         assert not cid_obj.agent.delete.called
 
@@ -267,9 +282,9 @@ class TestSubscriptionDetectAndRequire:
     """: subscription failure is CidCritical and never activates."""
 
     def test_subscription_failure_raises_cid_critical_and_creates_nothing(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         cid_obj.qs.ensure_subscription.side_effect = CidCritical('subscription not active')
-        excinfo, _ = run_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
         message = str(excinfo.value)
         assert 'Enterprise' in message
         assert 'will not activate' in message
@@ -282,9 +297,9 @@ class TestCleanupOnFailure:
     """: best-effort delete of the partially created agent, then re-raise."""
 
     def test_generic_create_failure_triggers_cleanup_delete_and_reraises(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         cid_obj.agent.create_or_update.side_effect = RuntimeError('boom')
-        excinfo, _ = run_raising(cid_obj, RuntimeError, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, RuntimeError, agent_id=AGENT_ID)
         assert 'boom' in str(excinfo.value)
         # cleanup delete goes through Agent.delete, which retries ConflictException
         # internally (, covered by the Agent helper tests)
@@ -293,20 +308,20 @@ class TestCleanupOnFailure:
     def test_cleanup_delete_failure_is_tolerated_and_original_error_reraised(self):
         """ plumbing: even when the ConflictException retry loop ultimately
         fails, the cleanup stays best-effort and the original error surfaces."""
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         cid_obj.agent.create_or_update.side_effect = RuntimeError('boom')
         cid_obj.agent.delete.side_effect = CidError('agent still busy (ConflictException) after 300 seconds')
-        excinfo, _ = run_raising(cid_obj, RuntimeError, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, RuntimeError, agent_id=AGENT_ID)
         assert 'boom' in str(excinfo.value)
         cid_obj.agent.delete.assert_called_once_with(AGENT_ID)
 
     def test_no_cleanup_delete_when_agent_pre_existed(self):
         """A pre-existing CID-managed agent is never deleted by cleanup."""
         existing = {'Arn': AGENT_ARN, 'Description': f'mine {CID_MANAGED_MARKER}'}
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',),
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',),
                            existing_agent=existing)
         cid_obj.agent.create_or_update.side_effect = RuntimeError('boom')
-        run_raising(cid_obj, RuntimeError, agent_id=AGENT_ID)
+        run_create_raising(cid_obj, RuntimeError, agent_id=AGENT_ID)
         assert not cid_obj.agent.delete.called
 
 
@@ -319,11 +334,11 @@ class TestResourceExistsSuccessPlumbing:
     """
 
     def test_created_result_after_tolerated_resource_exists_completes_the_flow(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         # exactly what Agent.create_or_update returns after a tolerated ResourceExists
         cid_obj.agent.create_or_update.return_value = {
             'agentId': AGENT_ID, 'arn': AGENT_ARN, 'action': 'created'}
-        result, output = run(cid_obj, agent_id=AGENT_ID)
+        result, output = run_create(cid_obj, agent_id=AGENT_ID)
         assert result == AGENT_ID
         assert 'Congratulations' in output
         cid_obj.agent.write_provenance.assert_called_once_with(AGENT_ARN, AGENT_ID)
@@ -335,14 +350,14 @@ class TestBringYourOwnSpace:
 
     def test_single_name_match_reuses_the_existing_space(self):
         """: a single SearchSpaces match is reused, not re-created."""
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         existing_arn = f'arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:space/existing-space'
         cid_obj.space.find_by_name.return_value = ['existing-space']
         cid_obj.space.get.return_value = {
             'spaceArn': existing_arn, 'name': 'My Space',
             'description': f'managed {CID_MANAGED_MARKER}',
         }
-        result, _ = run(cid_obj, agent_id=AGENT_ID, space_name='My Space')
+        result, _ = run_create(cid_obj, agent_id=AGENT_ID, space_name='My Space')
         assert result == AGENT_ID
         cid_obj.space.find_by_name.assert_called_once_with('My Space')
         # CID-managed reuse path updates the existing space id, never a derived one
@@ -351,9 +366,9 @@ class TestBringYourOwnSpace:
 
     def test_no_name_match_creates_space_with_derived_id(self):
         """: non-existent --space name creates a Space with derive_space_id."""
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         cid_obj.space.find_by_name.return_value = []
-        result, _ = run(cid_obj, agent_id=AGENT_ID, space_name='My Space')
+        result, _ = run_create(cid_obj, agent_id=AGENT_ID, space_name='My Space')
         assert result == AGENT_ID
         args = cid_obj.space.create_or_update.call_args
         assert args.args[0] == 'My-Space'   # deterministic sanitized id
@@ -363,9 +378,9 @@ class TestBringYourOwnSpace:
 
     def test_ambiguous_name_match_raises_cid_error_listing_ids(self):
         """: multiple exact matches raise a CidError listing the matching ids."""
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         cid_obj.space.find_by_name.return_value = ['space-one', 'space-two']
-        excinfo, _ = run_raising(cid_obj, CidError, agent_id=AGENT_ID, space_name='My Space')
+        excinfo, _ = run_create_raising(cid_obj, CidError, agent_id=AGENT_ID, space_name='My Space')
         message = str(excinfo.value)
         assert 'space-one' in message and 'space-two' in message
         assert not cid_obj.space.create_or_update.called
@@ -379,8 +394,8 @@ class TestKnowledgeBaseAttachment:
         kb_arn = f'arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:knowledge-base/kb-one'
         definition = make_definition(required=('dash-a',),
                                      knowledge_bases=(kb_arn, 'my-kb-note'))
-        cid_obj = make_cid(definition, present=('dash-a',))
-        result, output = run(cid_obj, agent_id=AGENT_ID)
+        cid_obj = make_create_cid(definition, present=('dash-a',))
+        result, output = run_create(cid_obj, agent_id=AGENT_ID)
         assert result == AGENT_ID
         kb_calls = [call for call in cid_obj.space.update_resources.call_args_list
                     if call.kwargs.get('resource_type') == 'KNOWLEDGE_BASE']
@@ -390,8 +405,8 @@ class TestKnowledgeBaseAttachment:
 
     def test_no_kb_update_call_when_nothing_resolvable(self):
         definition = make_definition(required=('dash-a',), knowledge_bases=('not-an-arn',))
-        cid_obj = make_cid(definition, present=('dash-a',))
-        run(cid_obj, agent_id=AGENT_ID)
+        cid_obj = make_create_cid(definition, present=('dash-a',))
+        run_create(cid_obj, agent_id=AGENT_ID)
         kb_calls = [call for call in cid_obj.space.update_resources.call_args_list
                     if call.kwargs.get('resource_type') == 'KNOWLEDGE_BASE']
         assert kb_calls == []
@@ -401,16 +416,16 @@ class TestPrincipalResolution:
     """: Author Pro entitlement and registered-principal checks."""
 
     def test_missing_author_pro_role_raises_cid_critical(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',),
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',),
                            user_role='AUTHOR')
-        excinfo, _ = run_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
         assert 'Author Pro' in str(excinfo.value)
         assert_nothing_created(cid_obj)
 
     def test_unregistered_principal_raises_before_any_grant(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         cid_obj.qs.describe_user.return_value = None
-        excinfo, _ = run_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
         message = str(excinfo.value)
         assert USERNAME in message
         assert 'register' in message.lower()
@@ -423,19 +438,19 @@ class TestGenAiAvailabilityAndAccessDenied:
     """: gen-AI availability pre-check and AccessDenied handling."""
 
     def test_missing_genai_operations_raise_cid_critical_naming_region_and_partition(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         cid_obj.space.client.meta.method_to_api_mapping = {'describe_dashboard': 'DescribeDashboard'}
-        excinfo, _ = run_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
         message = str(excinfo.value)
         assert REGION in message and PARTITION in message
         assert_nothing_created(cid_obj)
 
     def test_access_denied_raises_cid_critical_naming_action_and_permission(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         denied = cid_obj.space.client.exceptions.AccessDeniedException('denied')
         denied.operation_name = 'UpdateSpaceResources'
         cid_obj.space.update_resources.side_effect = denied
-        excinfo, _ = run_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, CidCritical, agent_id=AGENT_ID)
         message = str(excinfo.value)
         assert 'UpdateSpaceResources' in message
         assert 'quicksight:UpdateSpaceResources' in message
@@ -448,8 +463,8 @@ class TestParameterPersistence:
     """: per-agent parameter persistence."""
 
     def test_parameters_persisted_keyed_by_agent_id(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
-        run(cid_obj, agent_id=AGENT_ID)
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        run_create(cid_obj, agent_id=AGENT_ID)
         dump = cid_obj.parameters_controller.dump_parameters
         dump.assert_called_once()
         assert dump.call_args.kwargs.get('context') == AGENT_ID
@@ -460,18 +475,18 @@ class TestConflictGuard:
 
     def test_non_cid_existing_agent_is_refused_without_mutation(self):
         existing = {'Arn': AGENT_ARN, 'Description': 'hand-made agent'}
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',),
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',),
                            existing_agent=existing)
-        excinfo, _ = run_raising(cid_obj, CidError, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, CidError, agent_id=AGENT_ID)
         assert 'Refusing' in str(excinfo.value)
         for method in AGENT_MUTATING_METHODS:
             assert not getattr(cid_obj.agent, method).called
 
     def test_cid_managed_existing_agent_proceeds_with_update_path(self):
         existing = {'Arn': AGENT_ARN, 'Description': f'agent {CID_MANAGED_MARKER}'}
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',),
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',),
                            existing_agent=existing)
-        result, output = run(cid_obj, agent_id=AGENT_ID)
+        result, output = run_create(cid_obj, agent_id=AGENT_ID)
         assert result == AGENT_ID
         cid_obj.agent.create_or_update.assert_called_once()
         assert 'updated' in output
@@ -481,12 +496,12 @@ class TestNonCidSpaceReuse:
     """: a non-CID --space is reused additively, never mutated itself."""
 
     def test_non_cid_space_is_not_renamed_tagged_or_repermissioned(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
         shared_arn = f'arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:space/shared-space'
         cid_obj.space.find_by_name.return_value = ['shared-space']
         cid_obj.space.get.return_value = {
             'spaceArn': shared_arn, 'name': 'Shared Space', 'description': 'user space'}
-        result, _ = run(cid_obj, agent_id=AGENT_ID, space_name='Shared Space')
+        result, _ = run_create(cid_obj, agent_id=AGENT_ID, space_name='Shared Space')
         assert result == AGENT_ID
         assert not cid_obj.space.create_or_update.called
         assert not cid_obj.space.write_provenance.called
@@ -503,8 +518,8 @@ class TestDatasetKnowledge:
     def test_present_dataset_attaches_missing_dataset_warns_no_creates(self):
         definition = make_definition(required=('dash-a',),
                                      datasets=('ds-present', 'ds-missing'))
-        cid_obj = make_cid(definition, present=('dash-a',), present_datasets=('ds-present',))
-        result, output = run(cid_obj, agent_id=AGENT_ID)
+        cid_obj = make_create_cid(definition, present=('dash-a',), present_datasets=('ds-present',))
+        result, output = run_create(cid_obj, agent_id=AGENT_ID)
         assert result == AGENT_ID
         dataset_calls = [call for call in cid_obj.space.update_resources.call_args_list
                          if call.kwargs.get('resource_type') == 'DATA_SET']
@@ -517,8 +532,8 @@ class TestDatasetKnowledge:
 
     def test_no_dataset_update_call_when_none_present(self):
         definition = make_definition(required=('dash-a',), datasets=('ds-missing',))
-        cid_obj = make_cid(definition, present=('dash-a',))
-        run(cid_obj, agent_id=AGENT_ID)
+        cid_obj = make_create_cid(definition, present=('dash-a',))
+        run_create(cid_obj, agent_id=AGENT_ID)
         dataset_calls = [call for call in cid_obj.space.update_resources.call_args_list
                          if call.kwargs.get('resource_type') == 'DATA_SET']
         assert dataset_calls == []
@@ -528,45 +543,44 @@ class TestDualProvenanceAndLifecycle:
     """: dual provenance writes and PUBLISHED wait_active."""
 
     def test_dual_provenance_written_on_created_space_and_agent(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',))
-        run(cid_obj, agent_id=AGENT_ID)
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        run_create(cid_obj, agent_id=AGENT_ID)
         cid_obj.space.write_provenance.assert_called_once_with(SPACE_ARN, SPACE_KEY)
         cid_obj.agent.write_provenance.assert_called_once_with(AGENT_ARN, AGENT_ID)
 
     def test_wait_active_called_for_published_lifecycle(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',), lifecycle='PUBLISHED'),
+        cid_obj = make_create_cid(make_definition(required=('dash-a',), lifecycle='PUBLISHED'),
                            present=('dash-a',))
-        run(cid_obj, agent_id=AGENT_ID)
+        run_create(cid_obj, agent_id=AGENT_ID)
         cid_obj.agent.wait_active.assert_called_once_with(AGENT_ID)
 
     def test_wait_active_not_called_for_preview_lifecycle(self):
-        cid_obj = make_cid(make_definition(required=('dash-a',), lifecycle='PREVIEW'),
+        cid_obj = make_create_cid(make_definition(required=('dash-a',), lifecycle='PREVIEW'),
                            present=('dash-a',))
-        run(cid_obj, agent_id=AGENT_ID)
+        run_create(cid_obj, agent_id=AGENT_ID)
         assert not cid_obj.agent.wait_active.called
 
     def test_wait_active_failed_fail_fast_surfaces(self):
         """: FAILED status raised by wait_active surfaces from the handler."""
-        cid_obj = make_cid(make_definition(required=('dash-a',), lifecycle='PUBLISHED'),
+        cid_obj = make_create_cid(make_definition(required=('dash-a',), lifecycle='PUBLISHED'),
                            present=('dash-a',))
         cid_obj.agent.wait_active.side_effect = CidError(
             f"Agent {AGENT_ID!r} entered FAILED status while waiting for ACTIVE. "
             "ErrorMessage: model error")
-        excinfo, _ = run_raising(cid_obj, CidError, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, CidError, agent_id=AGENT_ID)
         message = str(excinfo.value)
         assert 'FAILED' in message and 'model error' in message
 
 
-# ===========================================================================
-# Property tests (tasks 9.5 - 9.12)
-# ===========================================================================
 PROPERTY_SETTINGS = settings(
     max_examples=100, deadline=None,
     suppress_health_check=[HealthCheck.function_scoped_fixture],
 )
 
-# generated dependency states: presence flags for required and optional keys
+
 required_flags = st.lists(st.booleans(), min_size=1, max_size=4)
+
+
 optional_flags = st.lists(st.booleans(), min_size=0, max_size=3)
 
 
@@ -579,9 +593,6 @@ def keys_from_flags(req_flags, opt_flags):
     return required, optional, present
 
 
-# Feature: cid-cmd-agent-flow-platform, Property 13: create-agent issues zero deploy
-# and zero data-layer calls
-# **Validates: Requirements 8.2, 8.7**
 @PROPERTY_SETTINGS
 @given(req_flags=required_flags, opt_flags=optional_flags)
 def test_property_13_zero_deploy_and_zero_data_layer_calls(req_flags, opt_flags):
@@ -591,7 +602,7 @@ def test_property_13_zero_deploy_and_zero_data_layer_calls(req_flags, opt_flags)
     reset_parameters()
     required, optional, present = keys_from_flags(req_flags, opt_flags)
     definition = make_definition(required=required, optional=optional)
-    cid_obj = make_cid(definition, present=present)
+    cid_obj = make_create_cid(definition, present=present)
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         if present:
@@ -602,9 +613,6 @@ def test_property_13_zero_deploy_and_zero_data_layer_calls(req_flags, opt_flags)
     assert_no_deploy_or_data_layer_calls(cid_obj)
 
 
-# Feature: cid-cmd-agent-flow-platform, Property 10: Zero dashboards present raises
-# a guidance error and creates nothing
-# **Validates: Requirements 8.3, 19.1**
 @PROPERTY_SETTINGS
 @given(
     n_required=st.integers(min_value=1, max_value=4),
@@ -620,14 +628,14 @@ def test_property_10_zero_present_raises_guidance_error_and_creates_nothing(
     required = [f'req-{i}' for i in range(n_required)]
     optional = [f'opt-{i}' for i in range(n_optional)]
     definition = make_definition(required=required, optional=optional)
-    cid_obj = make_cid(definition, present=())
+    cid_obj = make_create_cid(definition, present=())
     # unrelated deployed dashboards never satisfy catalog dependencies
     cid_obj.qs.list_dashboards.return_value = [
         {'DashboardId': f'unrelated-{i}',
          'Arn': f'arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:dashboard/unrelated-{i}'}
         for i in range(n_unrelated)
     ]
-    excinfo, _ = run_raising(cid_obj, CidError, agent_id=AGENT_ID)
+    excinfo, _ = run_create_raising(cid_obj, CidError, agent_id=AGENT_ID)
     message = str(excinfo.value)
     assert 'https://catalog.workshops.aws/awscid/en-US' in message   # CID/CUDOS guidance
     assert 'data-collection' in message                              # Data Collection guidance
@@ -635,9 +643,6 @@ def test_property_10_zero_present_raises_guidance_error_and_creates_nothing(
     assert_nothing_created(cid_obj)
 
 
-# Feature: cid-cmd-agent-flow-platform, Property 11: At least one present dashboard
-# proceeds using exactly the present set
-# **Validates: Requirements 8.4, 19.2, 19.4**
 @PROPERTY_SETTINGS
 @given(req_flags=required_flags, opt_flags=optional_flags)
 def test_property_11_proceeds_attaching_exactly_the_present_set(req_flags, opt_flags):
@@ -648,8 +653,8 @@ def test_property_11_proceeds_attaching_exactly_the_present_set(req_flags, opt_f
     reset_parameters()
     required, optional, present = keys_from_flags(req_flags, opt_flags)
     definition = make_definition(required=required, optional=optional)
-    cid_obj = make_cid(definition, present=present)
-    result, _ = run(cid_obj, agent_id=AGENT_ID)
+    cid_obj = make_create_cid(definition, present=present)
+    result, _ = run_create(cid_obj, agent_id=AGENT_ID)
     assert result == AGENT_ID
     calls = dashboard_update_calls(cid_obj)
     assert len(calls) == 1
@@ -659,9 +664,6 @@ def test_property_11_proceeds_attaching_exactly_the_present_set(req_flags, opt_f
     cid_obj.agent.create_or_update.assert_called_once()
 
 
-# Feature: cid-cmd-agent-flow-platform, Property 12: Missing required vs missing
-# optional emit the correct guidance and never deploy
-# **Validates: Requirements 8.5, 8.6, 19.3, 19.5**
 @PROPERTY_SETTINGS
 @given(req_flags=required_flags, opt_flags=optional_flags)
 def test_property_12_missing_dependency_warnings_carry_correct_guidance(req_flags, opt_flags):
@@ -669,14 +671,14 @@ def test_property_12_missing_dependency_warnings_carry_correct_guidance(req_flag
     missing Optional dashboard warns with the Data Collection guidance, no warning
     names a cid-cmd command, and nothing is deployed."""
     if not any(req_flags) and not any(opt_flags):
-        req_flags = [True] + list(req_flags[1:])  # a proceeding run needs >=1 present
+        req_flags = [True] + list(req_flags[1:])  # a proceeding run_create needs >=1 present
     reset_parameters()
     required, optional, present = keys_from_flags(req_flags, opt_flags)
     missing_required = [key for key in required if key not in present]
     missing_optional = [key for key in optional if key not in present]
     definition = make_definition(required=required, optional=optional)
-    cid_obj = make_cid(definition, present=present)
-    result, output = run(cid_obj, agent_id=AGENT_ID)
+    cid_obj = make_create_cid(definition, present=present)
+    result, output = run_create(cid_obj, agent_id=AGENT_ID)
     assert result == AGENT_ID
     lines = output.splitlines()
     for key in missing_required:
@@ -692,9 +694,6 @@ def test_property_12_missing_dependency_warnings_carry_correct_guidance(req_flag
     assert_no_deploy_or_data_layer_calls(cid_obj)
 
 
-# Feature: cid-cmd-agent-flow-platform, Property 20: Name/id collisions with non-CID
-# resources are refused, not mutated
-# **Validates: Requirements 13.1, 13.2**
 @PROPERTY_SETTINGS
 @given(
     has_tag=st.booleans(),
@@ -709,22 +708,19 @@ def test_property_20_non_cid_agent_collisions_refused_not_mutated(has_tag, has_m
     full_description = f'{description} {CID_MANAGED_MARKER}' if has_marker else description
     tags = [{'Key': CID_PROVENANCE_TAG_KEY, 'Value': CID_PROVENANCE_TAG_VALUE}] if has_tag else []
     existing = {'Arn': AGENT_ARN, 'Description': full_description}
-    cid_obj = make_cid(make_definition(required=('dash-a',)), present=('dash-a',),
+    cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',),
                        existing_agent=existing, resource_tags=tags)
     if has_tag or has_marker:  # CID-managed: idempotent update/no-op path proceeds
-        result, _ = run(cid_obj, agent_id=AGENT_ID)
+        result, _ = run_create(cid_obj, agent_id=AGENT_ID)
         assert result == AGENT_ID
         cid_obj.agent.create_or_update.assert_called_once()
     else:                      # non-CID: refused, zero mutating calls on the agent
-        excinfo, _ = run_raising(cid_obj, CidError, agent_id=AGENT_ID)
+        excinfo, _ = run_create_raising(cid_obj, CidError, agent_id=AGENT_ID)
         assert 'Refusing' in str(excinfo.value)
         for method in AGENT_MUTATING_METHODS:
             assert not getattr(cid_obj.agent, method).called
 
 
-# Feature: cid-cmd-agent-flow-platform, Property 21: Reusing a non-CID space tags
-# only the newly added resources
-# **Validates: Requirements 13.3**
 @PROPERTY_SETTINGS
 @given(
     space_id=st.text(alphabet='abcdefghij-0123456789', min_size=1, max_size=20),
@@ -740,14 +736,14 @@ def test_property_21_non_cid_space_reuse_never_mutates_the_space(space_id, descr
     reset_parameters()
     required, _, present = keys_from_flags(req_flags, [])
     definition = make_definition(required=required)
-    cid_obj = make_cid(definition, present=present)
+    cid_obj = make_create_cid(definition, present=present)
     cid_obj.space.find_by_name.return_value = [space_id]
     cid_obj.space.get.return_value = {
         'spaceArn': f'arn:aws:quicksight:{REGION}:{ACCOUNT_ID}:space/{space_id}',
         'name': 'Shared Space',
         'description': description,  # never carries the CID-managed marker
     }
-    result, _ = run(cid_obj, agent_id=AGENT_ID, space_name='Shared Space')
+    result, _ = run_create(cid_obj, agent_id=AGENT_ID, space_name='Shared Space')
     assert result == AGENT_ID
     # the space itself is never mutated
     assert not cid_obj.space.create_or_update.called
@@ -760,8 +756,6 @@ def test_property_21_non_cid_space_reuse_never_mutates_the_space(space_id, descr
     assert set(calls[0].args[1]) == {dash_arn(key) for key in present}
 
 
-# Feature: cid-cmd-agent-flow-platform, Property 24: Successful creation completes
-# cleanly and reports success
 @PROPERTY_SETTINGS
 @given(
     name=st.text(alphabet='abcdefghijklmnopqrstuvwxyz ABCDEFG', min_size=1, max_size=40)
@@ -773,16 +767,13 @@ def test_property_24_creation_completes_and_reports_success(name, lifecycle):
     reports success."""
     reset_parameters()
     definition = make_definition(required=('dash-a',), name=name, lifecycle=lifecycle)
-    cid_obj = make_cid(definition, present=('dash-a',))
-    result, output = run(cid_obj, agent_id=AGENT_ID)
+    cid_obj = make_create_cid(definition, present=('dash-a',))
+    result, output = run_create(cid_obj, agent_id=AGENT_ID)
     assert result == AGENT_ID
     cid_obj.agent.create_or_update.assert_called_once()
     assert 'Congratulations' in output
 
 
-# Feature: cid-cmd-agent-flow-platform, Property 26: Missing required input in
-# non-interactive mode is reported by name
-# **Validates: Requirements 17.2**
 @PROPERTY_SETTINGS
 @given(
     agent_keys=st.lists(
@@ -795,7 +786,7 @@ def test_property_26_missing_agent_id_reported_by_name_non_interactively(agent_k
     environment, resolution raises an error naming the missing 'agent-id' input."""
     reset_parameters()
     definition = make_definition(required=('dash-a',))
-    cid_obj = make_cid(definition, present=('dash-a',))
+    cid_obj = make_create_cid(definition, present=('dash-a',))
     cid_obj.resources['agents'] = {
         key: {'name': key.title(), 'agentId': key, 'category': 'FinOps'}
         for key in agent_keys
@@ -807,3 +798,495 @@ def test_property_26_missing_agent_id_reported_by_name_non_interactively(agent_k
                 create_agent(cid_obj)  # no agent_id supplied
     assert 'agent-id' in str(excinfo.value)
     assert_nothing_created(cid_obj)
+
+
+# ======================================================================
+# from test_delete_agent_flow.py
+# ======================================================================
+
+
+delete_agent = Cid.delete_agent.__wrapped__
+
+
+ALLOWED_DELETE_CALLS = {'agent.delete', 'space.client.delete_space'}
+
+
+FORBIDDEN_NAME_FRAGMENTS = (
+    'create_dashboard', 'delete_dashboard',
+    'create_data_set', 'delete_data_set', 'create_dataset', 'delete_dataset',
+    'create_knowledge_base', 'delete_knowledge_base',
+    'create_research', 'delete_research',
+)
+
+
+def agent_arn(agent_id):
+    return f'arn:{PARTITION}:quicksight:{REGION}:{ACCOUNT_ID}:agent/{agent_id}'
+
+
+def make_target_definition(space_keys=(SPACE_KEY,)):
+    """Catalog entry for the delete target."""
+    return {
+        'name': 'Test Agent',
+        'agentId': AGENT_ID,
+        'category': 'FinOps',
+        'dependsOn': {'spaces': list(space_keys)},
+    }
+
+
+def make_deployed_agent(agent_id, cid_managed=True, space_arns=(SPACE_ARN,)):
+    """DescribeAgent 'Agent' dict as returned by Agent.get."""
+    description = f'agent {CID_MANAGED_MARKER}' if cid_managed else 'hand-made agent'
+    return {
+        'AgentId': agent_id,
+        'Arn': agent_arn(agent_id),
+        'Description': description,
+        'Spaces': list(space_arns),
+    }
+
+
+def make_delete_cid(agents_catalog, deployed_agents, spaces=None):
+    """Build a Cid harness with mocked qs/space/agent helpers.
+
+    :param agents_catalog: the catalog 'agents' map (key -> entry)
+    :param deployed_agents: agent_id -> DescribeAgent dict (agent.get lookup table)
+    :param spaces: space_id -> space dict (space.get lookup table); default: the
+                   target Space existing with CID-managed provenance
+    """
+    cid_obj = Cid.__new__(Cid)
+    cid_obj.__dict__.clear()
+    excs = make_exceptions()
+
+    cid_obj.resources = {'agents': dict(agents_catalog), 'dashboards': {}, 'datasets': {}}
+    cid_obj.base = SimpleNamespace(
+        account_id=ACCOUNT_ID, region=REGION, partition=PARTITION, domain=DOMAIN,
+        username='test-user', session=MagicMock(name='session'),
+    )
+
+    qs = MagicMock(name='qs')
+    qs.list_dashboards.return_value = []
+    cid_obj.__dict__['qs'] = qs
+
+    if spaces is None:
+        spaces = {SPACE_KEY: {
+            'spaceArn': SPACE_ARN, 'name': 'Test Space',
+            'description': f'space {CID_MANAGED_MARKER}',
+        }}
+    space = MagicMock(name='space')
+    space.client.exceptions = excs
+    space.client.list_tags_for_resource.return_value = {'Tags': []}
+    space.get.side_effect = lambda space_id: spaces.get(space_id)
+    cid_obj.__dict__['space'] = space
+
+    agent = MagicMock(name='agent')
+    agent.client.exceptions = excs
+    agent.get.side_effect = lambda an_id: deployed_agents.get(an_id)
+    cid_obj.__dict__['agent'] = agent
+    return cid_obj
+
+
+def run_delete(cid_obj, **kwargs):
+    """Run the undecorated handler capturing stdout; returns (result, output)."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        result = delete_agent(cid_obj, **kwargs)
+    return result, buffer.getvalue()
+
+
+def run_delete_raising(cid_obj, exception_type, **kwargs):
+    """Run the handler expecting an exception; returns (excinfo, output)."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        with pytest.raises(exception_type) as excinfo:
+            delete_agent(cid_obj, **kwargs)
+    return excinfo, buffer.getvalue()
+
+
+def all_call_names(cid_obj):
+    """Fully qualified call names recorded on the qs/space/agent helper mocks."""
+    names = []
+    for helper_name in ('qs', 'space', 'agent'):
+        helper = cid_obj.__dict__[helper_name]
+        for call in helper.mock_calls:
+            if call[0]:  # skip bare __call__ entries
+                names.append(f'{helper_name}.{call[0]}')
+    return names
+
+
+def assert_only_in_scope_calls(cid_obj):
+    """Property 23 core assertion: zero out-of-scope create or delete calls.
+
+    The delete flow may only ever delete the target Agent (``agent.delete``) and,
+    when allowed, the agent's Space (``space.client.delete_space``). It must never
+    issue ANY create call, and never any dashboard/dataset/knowledge-base/Research
+    create or delete call.
+    """
+    for name in all_call_names(cid_obj):
+        method = name.split('.')[-1]
+        assert not any(fragment in method for fragment in FORBIDDEN_NAME_FRAGMENTS), (
+            f'out-of-scope call issued by delete-agent: {name}')
+        assert 'create' not in method, f'delete-agent must never create anything: {name}'
+        if 'delete' in method:
+            assert name in ALLOWED_DELETE_CALLS, (
+                f'delete-agent issued a delete call outside its scope: {name}')
+
+
+class TestConfirmationGate:
+    """: deletion is gated by a yes/no parameter defaulting to 'no'."""
+
+    def test_confirmation_prompt_defaults_to_no(self):
+        """The yes/no confirmation is requested with default='no', and a
+        non-confirmed answer makes no delete call."""
+        cid_obj = make_delete_cid({AGENT_ID: make_target_definition()},
+                           {AGENT_ID: make_deployed_agent(AGENT_ID)})
+        with patch('cid.common.get_yesno_parameter', return_value=False) as yesno:
+            result, output = run_delete(cid_obj, agent_id=AGENT_ID)
+        assert result == AGENT_ID
+        yesno.assert_called_once()
+        assert yesno.call_args.kwargs.get('default') == 'no'
+        assert yesno.call_args.kwargs.get('param_name') == 'confirm-delete'
+        assert not cid_obj.agent.delete.called
+        assert 'not confirmed' in output
+
+    def test_explicit_no_parameter_makes_no_delete_call(self):
+        """With the real parameter engine and confirm-delete='no', the handler
+        returns without deleting anything."""
+        reset_parameters({'confirm-delete': 'no'})
+        cid_obj = make_delete_cid({AGENT_ID: make_target_definition()},
+                           {AGENT_ID: make_deployed_agent(AGENT_ID)})
+        result, output = run_delete(cid_obj, agent_id=AGENT_ID)
+        assert result == AGENT_ID
+        assert 'not confirmed' in output
+        assert not cid_obj.agent.delete.called
+        assert not cid_obj.space.client.delete_space.called
+
+
+class TestMissingTargetSuccess:
+    """: a missing delete target is treated as success."""
+
+    def test_absent_agent_returns_cleanly_without_delete_call(self):
+        cid_obj = make_delete_cid({AGENT_ID: make_target_definition()}, deployed_agents={})
+        result, output = run_delete(cid_obj, agent_id=AGENT_ID)
+        assert result == AGENT_ID
+        assert 'does not exist' in output
+        assert not cid_obj.agent.delete.called
+        assert not cid_obj.space.client.delete_space.called
+
+
+class TestNoDashboardDelete:
+    """: deleting an Agent never deletes any dashboard."""
+
+    def test_successful_delete_issues_no_dashboard_delete_anywhere(self):
+        reset_parameters({'confirm-delete': 'yes'})
+        cid_obj = make_delete_cid({AGENT_ID: make_target_definition()},
+                           {AGENT_ID: make_deployed_agent(AGENT_ID)})
+        result, output = run_delete(cid_obj, agent_id=AGENT_ID)
+        assert result == AGENT_ID
+        assert 'No dashboard was deleted' in output
+        cid_obj.agent.delete.assert_called_once_with(AGENT_ID)
+        # no dashboard-delete method invoked anywhere: the qs helper (which owns
+        # delete_dashboard) is never touched, and the only delete call is agent.delete
+        assert not cid_obj.qs.mock_calls
+        names = all_call_names(cid_obj)
+        assert not any('delete_dashboard' in name for name in names)
+        assert [name for name in names if 'delete' in name.split('.')[-1]] == ['agent.delete']
+
+
+class TestNonCidTargetRefused:
+    """: a target lacking CID_Managed provenance is refused and reported."""
+
+    def test_non_cid_agent_refused_with_report_and_no_delete_call(self):
+        reset_parameters({'confirm-delete': 'yes'})
+        cid_obj = make_delete_cid({AGENT_ID: make_target_definition()},
+                           {AGENT_ID: make_deployed_agent(AGENT_ID, cid_managed=False)})
+        excinfo, _ = run_delete_raising(cid_obj, CidError, agent_id=AGENT_ID)
+        message = str(excinfo.value)
+        assert 'not managed' in message
+        assert AGENT_ID in message
+        assert not cid_obj.agent.delete.called
+        assert not cid_obj.space.client.delete_space.called
+
+    def test_provenance_tag_alone_is_sufficient_to_proceed(self):
+        """Dual-mechanism detection: the provenance tag counts even without the
+        Description marker."""
+        reset_parameters({'confirm-delete': 'yes'})
+        target = make_deployed_agent(AGENT_ID, cid_managed=False)
+        cid_obj = make_delete_cid({AGENT_ID: make_target_definition()}, {AGENT_ID: target})
+        cid_obj.space.client.list_tags_for_resource.return_value = {
+            'Tags': [{'Key': CID_PROVENANCE_TAG_KEY, 'Value': CID_PROVENANCE_TAG_VALUE}]}
+        result, _ = run_delete(cid_obj, agent_id=AGENT_ID)
+        assert result == AGENT_ID
+        cid_obj.agent.delete.assert_called_once_with(AGENT_ID)
+
+
+class TestConflictRetryDelegation:
+    """: ConflictException wait-and-retry during delete.
+
+    The retry loop itself lives in ``Agent.delete`` (``helpers/quicksight/agent.py``)
+    and is covered by ``test_agent_helper.py`` (ConflictException while the agent is
+    UPDATING/CREATING is retried until the status settles, up to the 300-second
+    limit). The handler's responsibility is to delegate the deletion to
+    ``self.agent.delete``, which owns that retry behavior — asserted here.
+    """
+
+    def test_handler_delegates_deletion_to_the_retrying_agent_helper(self):
+        reset_parameters({'confirm-delete': 'yes'})
+        cid_obj = make_delete_cid({AGENT_ID: make_target_definition()},
+                           {AGENT_ID: make_deployed_agent(AGENT_ID)})
+        result, _ = run_delete(cid_obj, agent_id=AGENT_ID)
+        assert result == AGENT_ID
+        # exactly one delegation to the helper that owns the ConflictException retry
+        cid_obj.agent.delete.assert_called_once_with(AGENT_ID)
+
+
+other_agent_configs = st.lists(
+    st.tuples(
+        st.booleans(),                                              # deployed?
+        st.booleans(),                                              # CID-managed?
+        st.sampled_from(['none', 'catalog', 'deployed', 'both']),   # references the space?
+    ),
+    min_size=0, max_size=4,
+)
+
+
+def build_catalog_and_deployed(configs):
+    """Materialize other-agent configs into catalog entries + deployed agents.
+
+    Returns (agents_catalog, deployed_agents, blocking_ids) where blocking_ids are
+    the other agents that must retain the Space: deployed AND CID-managed AND
+    referencing the space (via the catalog dependsOn.spaces or the deployed Spaces
+    list).
+    """
+    agents_catalog = {AGENT_ID: make_target_definition()}
+    deployed_agents = {AGENT_ID: make_deployed_agent(AGENT_ID)}
+    blocking_ids = set()
+    for index, (deployed, managed, reference) in enumerate(configs):
+        other_id = f'other-{index}'
+        entry = {'name': f'Other {index}', 'agentId': other_id, 'category': 'FinOps',
+                 'dependsOn': {'spaces': [SPACE_KEY] if reference in ('catalog', 'both') else []}}
+        agents_catalog[other_id] = entry
+        if deployed:
+            space_arns = [SPACE_ARN] if reference in ('deployed', 'both') else []
+            deployed_agents[other_id] = make_deployed_agent(
+                other_id, cid_managed=managed, space_arns=space_arns)
+            if managed and reference != 'none':
+                blocking_ids.add(other_id)
+    return agents_catalog, deployed_agents, blocking_ids
+
+
+@PROPERTY_SETTINGS
+@given(configs=other_agent_configs)
+def test_property_22_space_deleted_iff_no_other_cid_managed_agent_references_it(configs):
+    """For any set of other catalog agents — each randomly deployed or not,
+    CID-managed or not, referencing the Space or not — ``--delete-space`` deletes
+    the Space if and only if no OTHER deployed CID-managed agent references it;
+    otherwise the Space is retained and the dependency is reported."""
+    reset_parameters({'confirm-delete': 'yes', 'delete-space': True})
+    agents_catalog, deployed_agents, blocking_ids = build_catalog_and_deployed(configs)
+    cid_obj = make_delete_cid(agents_catalog, deployed_agents)
+    result, output = run_delete(cid_obj, agent_id=AGENT_ID)
+    assert result == AGENT_ID
+    cid_obj.agent.delete.assert_called_once_with(AGENT_ID)
+    if blocking_ids:
+        # retained + every blocking dependency reported
+        assert not cid_obj.space.client.delete_space.called
+        assert 'retained' in output
+        for other_id in blocking_ids:
+            assert other_id in output
+    else:
+        # no other deployed CID-managed agent references the space: deleted
+        cid_obj.space.client.delete_space.assert_called_once_with(
+            AwsAccountId=ACCOUNT_ID, SpaceId=SPACE_KEY)
+
+
+@PROPERTY_SETTINGS
+@given(
+    target_exists=st.booleans(),
+    target_managed=st.booleans(),
+    confirmed=st.booleans(),
+    delete_space_flag=st.booleans(),
+)
+def test_property_23_delete_never_issues_out_of_scope_create_or_delete_calls(
+        target_exists, target_managed, confirmed, delete_space_flag):
+    """Across generated delete scenarios (target exists/absent, CID/non-CID,
+    confirmed/unconfirmed, delete-space on/off), the only delete calls ever made
+    are ``agent.delete`` and (when allowed) ``space.client.delete_space`` — never
+    any dashboard, dataset, knowledge-base, or Research create or delete call.
+    A non-CID target additionally receives zero delete calls and is reported."""
+    initial = {'confirm-delete': 'yes' if confirmed else 'no'}
+    if delete_space_flag:
+        initial['delete-space'] = True
+    reset_parameters(initial)
+    deployed_agents = {}
+    if target_exists:
+        deployed_agents[AGENT_ID] = make_deployed_agent(AGENT_ID, cid_managed=target_managed)
+    cid_obj = make_delete_cid({AGENT_ID: make_target_definition()}, deployed_agents)
+
+    if target_exists and not target_managed:
+        excinfo, _ = run_delete_raising(cid_obj, CidError, agent_id=AGENT_ID)
+        assert 'not managed' in str(excinfo.value)          # reported
+        assert not cid_obj.agent.delete.called              # zero delete calls
+        assert not cid_obj.space.client.delete_space.called
+    else:
+        result, _ = run_delete(cid_obj, agent_id=AGENT_ID)
+        assert result == AGENT_ID
+        deletion_allowed = target_exists and target_managed and confirmed
+        assert cid_obj.agent.delete.called == deletion_allowed
+        if not (deletion_allowed and delete_space_flag):
+            assert not cid_obj.space.client.delete_space.called
+
+    assert_only_in_scope_calls(cid_obj)
+
+
+# ======================================================================
+# from test_list_agents_flow.py
+# ======================================================================
+
+
+list_agents = Cid.list_agents.__wrapped__
+
+
+def make_catalog():
+    """A catalog spanning multiple categories, including a Deprecated entry."""
+    return {
+        'finops': {'name': 'FinOps Advisor', 'agentId': 'finops', 'category': 'FinOps'},
+        'kpi': {'name': 'KPI Advisor', 'agentId': 'kpi', 'category': 'FinOps'},
+        'operations': {'name': 'Ops Advisor', 'agentId': 'operations', 'category': 'Operations'},
+        'legacy': {'name': 'Legacy Agent', 'agentId': 'legacy', 'category': 'Deprecated'},
+    }
+
+
+def make_list_cid(catalog, deployed=(), failing=()):
+    """Build a Cid harness with the given catalog and a mocked agent helper.
+
+    :param catalog: the ``resources['agents']`` mapping
+    :param deployed: agent ids for which agent.get returns a non-None describe
+    :param failing: agent ids for which agent.get raises (live-query failure)
+    """
+    cid_obj = Cid.__new__(Cid)
+    cid_obj.__dict__.clear()
+    cid_obj.resources = {'agents': catalog}
+
+    agent = MagicMock(name='agent')
+
+    def fake_get(agent_id):
+        if agent_id in failing:
+            raise RuntimeError(f'DescribeAgent failed for {agent_id}')
+        if agent_id in deployed:
+            return {'AgentId': agent_id, 'Arn': f'arn:aws:quicksight:us-east-1:123456789012:agent/{agent_id}'}
+        return None
+
+    agent.get.side_effect = fake_get
+    cid_obj.__dict__['agent'] = agent
+    return cid_obj
+
+
+def run_list(cid_obj, **kwargs):
+    """Run the undecorated handler capturing stdout; returns (listing, output)."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        result = list_agents(cid_obj, **kwargs)
+    return result, buffer.getvalue()
+
+
+class TestCategoryGroupingAndDeployedMarking:
+    """: category-grouped listing with ✓ on deployed entries."""
+
+    def test_entries_grouped_by_category(self):
+        cid_obj = make_list_cid(make_catalog())
+        listing, output = run_list(cid_obj)
+        assert set(listing) == {'FinOps', 'Operations'}
+        assert [entry['key'] for entry in listing['FinOps']] == ['finops', 'kpi']
+        assert [entry['key'] for entry in listing['Operations']] == ['operations']
+        # category headers appear in the printed output
+        assert 'FinOps' in output and 'Operations' in output
+
+    def test_exactly_the_deployed_entries_are_check_marked(self):
+        cid_obj = make_list_cid(make_catalog(), deployed=('finops', 'operations'))
+        listing, output = run_list(cid_obj)
+        deployed = {entry['agentId'] for entries in listing.values()
+                    for entry in entries if entry['deployed']}
+        assert deployed == {'finops', 'operations'}
+        assert f'{DEPLOYED_MARK}[finops]' in output
+        assert f'{DEPLOYED_MARK}[operations]' in output
+        # the non-deployed entry is listed without the check indicator
+        assert '[kpi] KPI Advisor' in output
+        assert f'{DEPLOYED_MARK}[kpi]' not in output
+
+    def test_no_deployed_entries_no_check_marks(self):
+        cid_obj = make_list_cid(make_catalog())
+        listing, output = run_list(cid_obj)
+        assert all(not entry['deployed'] for entries in listing.values() for entry in entries)
+        assert DEPLOYED_MARK not in output
+
+    def test_empty_catalog_prints_message_and_returns_empty(self):
+        cid_obj = make_list_cid({})
+        listing, output = run_list(cid_obj)
+        assert listing == {}
+        assert 'No agents found' in output
+        assert not cid_obj.agent.get.called
+
+
+class TestLiveStateSource:
+    """: deployment status comes from live DescribeAgent per entry,
+    never from ListAgents (which omits PREVIEW/FAILED agents)."""
+
+    def test_agent_get_called_once_per_non_deprecated_entry(self):
+        cid_obj = make_list_cid(make_catalog(), deployed=('finops',))
+        run_list(cid_obj)
+        queried = sorted(call.args[0] for call in cid_obj.agent.get.call_args_list)
+        assert queried == ['finops', 'kpi', 'operations']
+
+    def test_status_never_relies_on_list_agents(self):
+        cid_obj = make_list_cid(make_catalog(), deployed=('finops',))
+        run_list(cid_obj)
+        assert not cid_obj.agent.client.list_agents.called
+        # no ListAgents-shaped call anywhere on the helper either
+        assert not any('list_agents' in name for name, _, _ in cid_obj.agent.mock_calls
+                       if name != 'get')
+
+
+class TestDeprecatedHidden:
+    """: Deprecated entries are absent from output AND never described."""
+
+    def test_deprecated_entry_absent_from_listing_and_output(self):
+        cid_obj = make_list_cid(make_catalog(), deployed=('legacy',))
+        listing, output = run_list(cid_obj)
+        assert 'Deprecated' not in listing
+        keys = {entry['key'] for entries in listing.values() for entry in entries}
+        assert 'legacy' not in keys
+        assert 'legacy' not in output
+        assert 'Legacy Agent' not in output
+
+    def test_deprecated_entry_never_queried(self):
+        cid_obj = make_list_cid(make_catalog())
+        run_list(cid_obj)
+        queried = {call.args[0] for call in cid_obj.agent.get.call_args_list}
+        assert 'legacy' not in queried
+
+
+class TestUnknownStatusFallback:
+    """: a live-query failure marks that entry '?' and listing continues."""
+
+    def test_failing_entry_listed_with_unknown_indicator(self):
+        cid_obj = make_list_cid(make_catalog(), deployed=('finops',), failing=('kpi',))
+        listing, output = run_list(cid_obj)
+        assert '?[kpi] KPI Advisor' in output
+        # the failing entry is not marked deployed
+        kpi = next(entry for entry in listing['FinOps'] if entry['key'] == 'kpi')
+        assert kpi['deployed'] is False
+
+    def test_remaining_entries_still_listed_after_failure(self):
+        cid_obj = make_list_cid(make_catalog(), deployed=('finops',), failing=('kpi',))
+        listing, output = run_list(cid_obj)
+        keys = {entry['key'] for entries in listing.values() for entry in entries}
+        assert keys == {'finops', 'kpi', 'operations'}
+        # deployed marking on the other entries is unaffected
+        assert f'{DEPLOYED_MARK}[finops]' in output
+        assert '[operations] Ops Advisor' in output
+
+    def test_all_entries_failing_all_marked_unknown_none_deployed(self):
+        cid_obj = make_list_cid(make_catalog(), failing=('finops', 'kpi', 'operations'))
+        listing, output = run_list(cid_obj)
+        assert output.count('?[') == 3
+        assert DEPLOYED_MARK not in output
+        assert all(not entry['deployed'] for entries in listing.values() for entry in entries)

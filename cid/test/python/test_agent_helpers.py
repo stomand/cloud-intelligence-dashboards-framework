@@ -1,27 +1,31 @@
-"""Tests for the Agent helper (cid/helpers/quicksight/agent.py).
-
-Feature: cid-cmd-agent-flow-platform
-
-Mock-based unit tests (task 6.3) plus Hypothesis property tests for
-Correctness Properties 16, 17 (Agent portion) and 18 (tasks 6.4-6.6).
-No boto3 calls are ever made: the quicksight client is a MagicMock with
-real Exception subclasses attached, and time.sleep is patched out.
+""" Tests for the Agent and Space AWS helpers (cid.helpers.quicksight.agent / .space).
 """
-from unittest.mock import MagicMock, patch
 
+from unittest.mock import MagicMock, patch
 import pytest
 from hypothesis import given, settings, strategies as st
-
 from cid.exceptions import CidError
 from cid.helpers.quicksight.agent import Agent, AGENT_OWNER_ACTIONS
 from cid.helpers.quicksight.agent_logic import PERSONA_API_FIELDS, PERSONA_FIELDS
+import logging
+from cid.helpers.quicksight.agent_logic import CID_MANAGED_MARKER
+from unittest.mock import MagicMock
+from cid.base import CidBase
+from cid.helpers.quicksight.agent_logic import (
+    CID_MANAGED_MARKER,
+    CID_PROVENANCE_TAG_KEY,
+    CID_PROVENANCE_TAG_VALUE,
+)
+from cid.helpers.quicksight.space import SPACE_OWNER_ACTIONS, Space
+
+
+# ======================================================================
+# from test_agent_helper.py
+# ======================================================================
+
 
 ACCOUNT_ID = '123456789012'
 
-
-# ---------------------------------------------------------------------------
-# Mock client scaffolding
-# ---------------------------------------------------------------------------
 
 class ResourceNotFoundException(Exception):
     pass
@@ -131,10 +135,6 @@ def created_agent_shape(definition, arn='arn:new-agent', status='ACTIVE'):
         'Spaces': [],
     }
 
-
-# ---------------------------------------------------------------------------
-# Task 6.3 - mock-based unit tests
-# ---------------------------------------------------------------------------
 
 class TestCreateOrUpdateBranches:
     """No-op vs update vs create branches."""
@@ -368,17 +368,27 @@ class TestDescribeBasedExistence:
         client.list_agents.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Shared Hypothesis strategies
-# ---------------------------------------------------------------------------
-
 _names = st.text(alphabet='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -', min_size=1, max_size=50).filter(lambda s: s.strip())
+
+
 _ids = st.text(alphabet='abcdefghijklmnopqrstuvwxyz0123456789-', min_size=1, max_size=20)
+
+
 _persona_values = st.text(alphabet='abcdefghijklmnopqrstuvwxyz .,', min_size=5, max_size=40)
+
+
 _personas = st.fixed_dictionaries({field: _persona_values for field in PERSONA_FIELDS})
+
+
 _starter_prompt_lists = st.lists(st.text(alphabet='abcdefghijklmnopqrstuvwxyz ?', min_size=1, max_size=60), min_size=0, max_size=3)
+
+
 _welcomes = st.text(alphabet='abcdefghijklmnopqrstuvwxyz .!', min_size=1, max_size=100)
+
+
 _lifecycles = st.sampled_from(['PUBLISHED', 'DRAFT'])
+
+
 _space_arn_lists = st.lists(
     _ids.map(lambda s: f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:space/{s}'),
     min_size=0, max_size=3, unique=True,
@@ -391,11 +401,6 @@ def _expected_new_prompt(persona):
             for api_field, catalog_field in zip(PERSONA_API_FIELDS, PERSONA_FIELDS)}
 
 
-# ---------------------------------------------------------------------------
-# Task 6.4
-# Feature: cid-cmd-agent-flow-platform, Property 16: Persona, prompts, and welcome
-# are full-replacement and Name is always sent
-# ---------------------------------------------------------------------------
 @settings(max_examples=100, deadline=None)
 @given(
     agent_id=_ids,
@@ -449,11 +454,6 @@ def test_property_16_update_full_replacement_and_name_always_sent(
     assert payload['WelcomeMessage'] == welcome
 
 
-# ---------------------------------------------------------------------------
-# Task 6.5
-# Feature: cid-cmd-agent-flow-platform, Property 18: CreateAgent payload faithfully
-# carries the definition
-# ---------------------------------------------------------------------------
 @settings(max_examples=100, deadline=None)
 @given(
     agent_id=_ids,
@@ -517,11 +517,6 @@ def test_property_18_create_agent_payload_fidelity(
         client.update_agent.assert_not_called()
 
 
-# ---------------------------------------------------------------------------
-# Task 6.6
-# Feature: cid-cmd-agent-flow-platform, Property 17: Owner grants use exactly the
-# canonical action sets (Agent portion)
-# ---------------------------------------------------------------------------
 @settings(max_examples=100, deadline=None)
 @given(
     agent_id=st.text(min_size=1, max_size=40),
@@ -555,31 +550,6 @@ def test_property_17_agent_owner_grant_exact_action_set(agent_id, principal):
         'quicksight:DescribeAgentPermissions',
         'quicksight:UpdateAgentPermissions',
     }
-
-
-# ---------------------------------------------------------------------------
-# Regression: write_provenance never mutates a mid-publish agent (live bug)
-# Observed live (twice):
-#  1. `cid-cmd create-agent --agent-id finops` crashed with an uncaught
-#     `ConflictException: Cannot update Agent cid-finops-advisor in UPDATING status`
-#     raised from write_provenance's UpdateAgent marker call right after CreateAgent
-#.
-#  2. Retrying that UpdateAgent until accepted got it ACCEPTED while the agent's
-#     initial publish workflow was still in flight; the overlapping publish left
-#     duplicate internal records for the agent (TagResource then failed with
-#     "A resource with the same resourceName but a different internalId already
-#     exists: PUBLISHED-<guid>"), the console showed the linked Space as
-#     "resources unavailable", and chatting with the agent errored out — while
-#     DescribeAgent output looked completely healthy. A console remove/re-add of
-#     the same Space (a clean UpdateAgent on a SETTLED agent) repaired it.
-# The fix: bake the marker into the CreateAgent Description (no post-create
-# UpdateAgent needed) and never issue UpdateAgent/TagResource while the agent
-# status is CREATING/UPDATING.
-# ---------------------------------------------------------------------------
-
-import logging
-
-from cid.helpers.quicksight.agent_logic import CID_MANAGED_MARKER
 
 
 class TestCreateBakesProvenanceMarker:
@@ -800,15 +770,6 @@ class TestWriteProvenanceMutationSafety:
         client.tag_resource.assert_called_once()
 
 
-# ---------------------------------------------------------------------------
-# Regression: UpdateAgent FULL-REPLACEMENT semantics (live bug)
-# Observed live: the write_provenance marker write sent only Name+Description and
-# the service CLEARED the deployed CustomPromptInterface, StarterPrompts and
-# WelcomeMessage (UpdateAgent full-replaces the configuration fields). Also
-# observed live: UpdateAgent rejects an 'AgentLifecycle' parameter with
-# ParamValidationError — the lifecycle is create-only.
-# ---------------------------------------------------------------------------
-
 class TestUpdateAgentFullReplacementSemantics:
     """Every UpdateAgent call must carry the deployed configuration through and
     must never send the create-only AgentLifecycle parameter."""
@@ -915,3 +876,291 @@ class TestUpdateAgentFullReplacementSemantics:
         assert payload['StarterPrompts'] == list(definition['starterPrompts'])
         assert payload['WelcomeMessage'] == definition['welcomeMessage']
         assert set(payload['CustomPromptInput']['NewPrompt']) == set(PERSONA_API_FIELDS)
+
+
+# ======================================================================
+# from test_space_helper.py
+# ======================================================================
+
+
+def make_space(resources=None):
+    """Build a Space over a fully mocked boto3 session/client.
+
+    ``client.exceptions.*`` must be real exception classes so ``except`` clauses work.
+    """
+    client = MagicMock()
+    client.exceptions.ResourceNotFoundException = type('ResourceNotFoundException', (Exception,), {})
+    client.exceptions.ResourceExistsException = type('ResourceExistsException', (Exception,), {})
+    client.exceptions.AccessDeniedException = type('AccessDeniedException', (Exception,), {})
+    client.exceptions.ClientError = type('ClientError', (Exception,), {})
+    session = MagicMock()
+    session.client.return_value = client
+    session.region_name = 'us-east-1'
+    session.get_partition_for_region.return_value = 'aws'
+    space = Space(session, resources=resources)
+    space.awsIdentity = {'Account': ACCOUNT_ID}  # avoid the STS call in CidBase
+    return space, client, session
+
+
+def test_space_subclasses_cidbase():
+    assert issubclass(Space, CidBase)
+
+
+def test_constructor_obtains_quicksight_client_from_session():
+    space, client, session = make_space()
+    session.client.assert_called_once_with('quicksight')
+    assert space.client is client
+
+
+def test_constructor_stores_resources():
+    resources = {'agents': {'finops': {}}}
+    space, _, _ = make_space(resources=resources)
+    assert space.resources == resources
+    default_space, _, _ = make_space()
+    assert default_space.resources == {}
+
+
+def test_create_or_update_creates_when_space_does_not_exist():
+    space, client, _ = make_space()
+    client.describe_space.side_effect = client.exceptions.ResourceNotFoundException()
+    arn = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:space/my-space'
+    client.create_space.return_value = {'spaceArn': arn}
+
+    result = space.create_or_update('my-space', 'My Space', description='desc')
+
+    assert result == arn
+    client.create_space.assert_called_once_with(
+        AwsAccountId=ACCOUNT_ID, SpaceId='my-space', Name='My Space', Description='desc',
+    )
+    client.update_space.assert_not_called()
+
+
+def test_create_or_update_updates_when_space_exists():
+    space, client, _ = make_space()
+    client.describe_space.return_value = {'Space': {'name': 'Old Name'}}
+    arn = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:space/my-space'
+    client.update_space.return_value = {'spaceArn': arn}
+
+    result = space.create_or_update('my-space', 'New Name')
+
+    assert result == arn
+    client.update_space.assert_called_once_with(
+        AwsAccountId=ACCOUNT_ID, SpaceId='my-space', Name='New Name',
+    )
+    client.create_space.assert_not_called()
+
+
+def test_create_or_update_falls_back_to_update_on_create_race():
+    space, client, _ = make_space()
+    client.describe_space.side_effect = client.exceptions.ResourceNotFoundException()
+    client.create_space.side_effect = client.exceptions.ResourceExistsException()
+    arn = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:space/my-space'
+    client.update_space.return_value = {'spaceArn': arn}
+
+    result = space.create_or_update('my-space', 'My Space')
+
+    assert result == arn
+    client.create_space.assert_called_once()
+    client.update_space.assert_called_once()
+
+
+def _arn(suffix):
+    return f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:dashboard/{suffix}'
+
+
+def test_update_resources_adds_only_missing_arns():
+    space, client, _ = make_space()
+    existing = _arn('already-there')
+    new = _arn('new-dashboard')
+    client.list_space_resources.return_value = {
+        'Resources': [{'ResourceType': 'DASHBOARD', 'ResourceDetails': {'resourceArn': existing}}],
+    }
+    client.update_space_resources.return_value = {'FailedResourceOperations': []}
+
+    failed = space.update_resources('my-space', [existing, new])
+
+    assert failed == []
+    client.update_space_resources.assert_called_once()
+    kwargs = client.update_space_resources.call_args.kwargs
+    added_arns = [item['ResourceDetails']['resourceArn'] for item in kwargs['AddResources']]
+    assert added_arns == [new]  # only the ARN not already present
+    assert 'RemoveResources' not in kwargs  # strictly additive by default
+
+
+def test_update_resources_noop_when_everything_present():
+    space, client, _ = make_space()
+    existing = _arn('already-there')
+    client.list_space_resources.return_value = {
+        'Resources': [{'ResourceType': 'DASHBOARD', 'ResourceDetails': {'resourceArn': existing}}],
+    }
+
+    failed = space.update_resources('my-space', [existing])
+
+    assert failed == []
+    client.update_space_resources.assert_not_called()
+
+
+def test_update_resources_reports_partial_failures_and_continues(caplog):
+    space, client, _ = make_space()
+    bad = _arn('denied-dashboard')
+    good = _arn('fine-dashboard')
+    client.list_space_resources.return_value = {'Resources': []}
+    failure = {
+        'ResourceType': 'DASHBOARD',
+        'ResourceDetails': {'resourceArn': bad},
+        'ErrorMessage': 'Access denied',
+    }
+    client.update_space_resources.return_value = {'FailedResourceOperations': [failure]}
+
+    with caplog.at_level(logging.WARNING, logger='cid.helpers.quicksight.space'):
+        failed = space.update_resources('my-space', [good, bad])
+
+    assert failed == [failure]  # the failed list is returned to the caller
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any(bad in r.getMessage() and 'Access denied' in r.getMessage() for r in warnings)
+
+
+def test_grant_owner_sends_exactly_the_16_action_owner_set():
+    space, client, _ = make_space()
+    principal = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:user/default/admin'
+
+    space.grant_owner('my-space', principal)
+
+    client.update_space_permissions.assert_called_once()
+    kwargs = client.update_space_permissions.call_args.kwargs
+    assert kwargs['AwsAccountId'] == ACCOUNT_ID
+    assert kwargs['SpaceId'] == 'my-space'
+    grants = kwargs['GrantPermissions']
+    assert len(grants) == 1
+    assert grants[0]['Principal'] == principal
+    assert set(grants[0]['Actions']) == set(SPACE_OWNER_ACTIONS)
+    assert len(grants[0]['Actions']) == 16
+
+
+def test_find_by_name_single_match():
+    space, client, _ = make_space()
+    client.search_spaces.return_value = {'SpaceSummaries': [{'spaceId': 'space-1'}]}
+
+    assert space.find_by_name('My Space') == ['space-1']
+    kwargs = client.search_spaces.call_args.kwargs
+    assert kwargs['Filters'] == [{'name': 'SPACE_NAME', 'operator': 'STRING_EQUALS', 'value': 'My Space'}]
+
+
+def test_find_by_name_multiple_matches():
+    space, client, _ = make_space()
+    client.search_spaces.return_value = {
+        'SpaceSummaries': [{'spaceId': 'space-1'}, {'spaceId': 'space-2'}],
+    }
+
+    assert space.find_by_name('My Space') == ['space-1', 'space-2']
+
+
+def test_find_by_name_zero_matches():
+    space, client, _ = make_space()
+    client.search_spaces.return_value = {'SpaceSummaries': []}
+
+    assert space.find_by_name('No Such Space') == []
+
+
+def test_write_provenance_tags_and_writes_description_marker():
+    space, client, _ = make_space()
+    space_arn = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:space/my-space'
+    client.describe_space.return_value = {
+        'Space': {'name': 'My Space', 'description': 'FinOps knowledge'},
+    }
+
+    space.write_provenance(space_arn, 'my-space')
+
+    client.tag_resource.assert_called_once_with(
+        ResourceArn=space_arn,
+        Tags=[{'Key': CID_PROVENANCE_TAG_KEY, 'Value': CID_PROVENANCE_TAG_VALUE}],
+    )
+    client.update_space.assert_called_once()
+    kwargs = client.update_space.call_args.kwargs
+    assert kwargs['SpaceId'] == 'my-space'
+    assert kwargs['Name'] == 'My Space'
+    assert CID_MANAGED_MARKER in kwargs['Description']
+    assert kwargs['Description'].startswith('FinOps knowledge')  # original description preserved
+
+
+def test_write_provenance_tolerates_tag_failure_and_still_writes_marker():
+    space, client, _ = make_space()
+    space_arn = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:space/my-space'
+    client.tag_resource.side_effect = client.exceptions.AccessDeniedException()
+    client.describe_space.return_value = {'Space': {'name': 'My Space', 'description': ''}}
+
+    space.write_provenance(space_arn, 'my-space')  # must not raise
+
+    client.update_space.assert_called_once()
+    kwargs = client.update_space.call_args.kwargs
+    assert CID_MANAGED_MARKER in kwargs['Description']
+
+
+def test_write_provenance_skips_update_when_marker_already_present():
+    space, client, _ = make_space()
+    space_arn = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:space/my-space'
+    client.describe_space.return_value = {
+        'Space': {'name': 'My Space', 'description': f'Something. {CID_MANAGED_MARKER}'},
+    }
+
+    space.write_provenance(space_arn, 'my-space')
+
+    client.update_space.assert_not_called()
+
+
+_space_ids = st.text(
+    alphabet='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ-_=.+',
+    min_size=1, max_size=40,
+)
+
+
+_principal_arns = st.text(min_size=1, max_size=60).map(
+    lambda s: f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:user/default/{s}'
+)
+
+
+@settings(max_examples=100, deadline=None)
+@given(space_id=_space_ids, principal_arn=_principal_arns)
+def test_property_17_space_owner_grant_uses_exactly_the_canonical_action_set(space_id, principal_arn):
+    space, client, _ = make_space()
+
+    space.grant_owner(space_id, principal_arn)
+
+    client.update_space_permissions.assert_called_once()
+    kwargs = client.update_space_permissions.call_args.kwargs
+    grants = kwargs['GrantPermissions']
+    assert len(grants) == 1
+    assert grants[0]['Principal'] == principal_arn
+    actions = grants[0]['Actions']
+    # exactly the 16 canonical owner actions: no more, no fewer, no duplicates
+    assert len(actions) == 16
+    assert set(actions) == set(SPACE_OWNER_ACTIONS)
+    assert kwargs['SpaceId'] == space_id
+
+
+def test_write_provenance_conflict_settles_then_marker_written():
+    """UpdateSpace ConflictException while the Space settles is retried until
+    the Description marker write succeeds (must not raise)."""
+    from unittest.mock import patch
+
+    space, client, _ = make_space()
+    client.exceptions.ConflictException = type('ConflictException', (Exception,), {})
+    space_arn = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:space/my-space'
+    client.describe_space.return_value = {
+        'Space': {'name': 'My Space', 'description': 'FinOps knowledge'},
+    }
+    client.update_space.side_effect = [
+        client.exceptions.ConflictException('Cannot update Space my-space in UPDATING status'),
+        client.exceptions.ConflictException('Cannot update Space my-space in UPDATING status'),
+        None,
+    ]
+
+    with patch('cid.helpers.quicksight.space.time.sleep') as mock_sleep:
+        space.write_provenance(space_arn, 'my-space')  # must not raise
+
+    assert client.update_space.call_count == 3
+    assert mock_sleep.call_count == 2
+    kwargs = client.update_space.call_args.kwargs
+    assert kwargs['Name'] == 'My Space'
+    assert CID_MANAGED_MARKER in kwargs['Description']
+    assert kwargs['Description'].startswith('FinOps knowledge')
