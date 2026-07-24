@@ -13,7 +13,7 @@
 #
 # The "--help lists agent commands" test runs WITHOUT AWS credentials.
 
-account_id=$(aws sts get-caller-identity --query "Account" --output text 2>/dev/null)
+account_id=$(aws sts get-caller-identity --query "Account" --output text 2>/dev/null || true)
 agent_catalog_key="${agent_catalog_key:-finops}"           # catalog key used with --agent-id
 agent_id="${agent_id:-cid-finops-advisor}"                 # deployed agentId of that catalog entry
 # agents/spaces are catalog content; load the repo's local catalog so the tests
