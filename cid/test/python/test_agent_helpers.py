@@ -111,7 +111,7 @@ def wire_create_lifecycle(client, created_agent):
     """describe_agent raises NotFound until create_agent has been called, then returns
     ``created_agent`` (the settled, freshly created agent with NO Spaces attached).
 
-    Mirrors the live lifecycle the post-create Space attach depends on: the agent is
+    Mirrors the lifecycle the post-create Space attach depends on: the agent is
     absent before CreateAgent and describable (settled) afterwards.
     """
     def describe(**kwargs):
@@ -500,10 +500,9 @@ def test_property_18_create_agent_payload_fidelity(
     assert payload['WelcomeMessage'] == welcome
     # Lifecycle passed through
     assert payload['AgentLifecycle'] == lifecycle
-    # Spaces are NEVER passed inside CreateAgent (attach-at-create produces a broken
-    # Space association — observed live); they are attached afterwards via a single
-    # UpdateAgent SpacesToAdd against the settled agent, carrying Name through and
-    # never sending the create-only AgentLifecycle.
+    # Spaces are not passed inside CreateAgent; they are attached afterwards via a
+    # single UpdateAgent SpacesToAdd against the settled agent, carrying Name through
+    # and never sending the create-only AgentLifecycle.
     assert 'Spaces' not in payload
     if space_arns:
         client.update_agent.assert_called_once()
@@ -594,10 +593,8 @@ class TestCreateBakesProvenanceMarker:
 
 class TestSpacesAttachedAfterCreateNotAtCreate:
     """The Space attach happens via UpdateAgent SpacesToAdd against the SETTLED
-    agent, never inside CreateAgent (observed live: attach-at-create produces a
-    broken Space association — console "resources unavailable" + failing chat —
-    while the console's remove/re-add repair, an UpdateAgent pair against a
-    settled ACTIVE agent, always fixes it)."""
+    agent, not inside CreateAgent. Creation and knowledge-source association are kept
+    as separate, independently retryable steps."""
 
     def test_create_payload_never_carries_spaces(self):
         helper, client = make_agent_helper()
@@ -681,17 +678,14 @@ class TestSpacesAttachedAfterCreateNotAtCreate:
 
 
 class TestWriteProvenanceMutationSafety:
-    """write_provenance never mutates a transitional (CREATING/UPDATING) agent:
-    the mid-publish UpdateAgent corrupted the service-internal resource registry
-    (duplicate PUBLISHED-<internalId> records, "resources unavailable" in the
-    console, broken chat — observed live)."""
+    """write_provenance never mutates a transitional (CREATING/UPDATING) agent: it
+    waits for the agent to settle before any UpdateAgent/TagResource call."""
 
     AGENT_ARN = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:agent/cid-finops-advisor'
 
     def test_fresh_agent_with_baked_marker_settles_then_tags_without_update(self):
-        """The live fixed flow: marker baked at create, agent settles
-        CREATING -> UPDATING -> ACTIVE, tag written after settle, UpdateAgent
-        NEVER called."""
+        """Marker baked at create, agent settles CREATING -> UPDATING -> ACTIVE,
+        tag written after settle, UpdateAgent NEVER called."""
         helper, client = make_agent_helper()
         description = f'A test agent {CID_MANAGED_MARKER}'
         client.describe_agent.side_effect = [
@@ -701,7 +695,7 @@ class TestWriteProvenanceMutationSafety:
         ]
         with patch('cid.helpers.quicksight.agent.time.sleep') as mock_sleep:
             helper.write_provenance(self.AGENT_ARN, 'cid-finops-advisor')
-        client.update_agent.assert_not_called()   # no mutation of a mid-publish agent
+        client.update_agent.assert_not_called()   # no mutation of a transitional agent
         client.tag_resource.assert_called_once()  # tag only after ACTIVE
         assert mock_sleep.call_count == 2
 
@@ -757,7 +751,7 @@ class TestWriteProvenanceMutationSafety:
             with caplog.at_level(logging.WARNING, logger='cid.helpers.quicksight.agent'):
                 helper.write_provenance(  # must NOT raise
                     self.AGENT_ARN, 'cid-finops-advisor', timeout=300, interval=5)
-        # THE regression assertion: zero mutating calls against a mid-publish agent.
+        # Key assertion: zero mutating calls against a transitional agent.
         client.update_agent.assert_not_called()
         # 300s bound at 5s intervals, then warn-and-skip (never a crash).
         assert mock_sleep.call_count == 300 // 5
@@ -783,7 +777,7 @@ class TestUpdateAgentFullReplacementSemantics:
     def test_marker_write_carries_deployed_configuration_through(self):
         """The Description-marker write must include the deployed StarterPrompts,
         WelcomeMessage and CustomPromptInput so the full-replacement UpdateAgent
-        does not wipe them (live bug)."""
+        does not clear them."""
         definition, deployed = self._deployed()
         deployed['Description'] = 'A test agent'  # no marker yet
         helper, client = make_agent_helper()
@@ -800,8 +794,8 @@ class TestUpdateAgentFullReplacementSemantics:
 
     def test_tag_written_after_marker_write(self):
         """The provenance tag is written AFTER the marker write settles: TagResource
-        issued while a fresh agent is still CREATING is accepted (202) but dropped
-        server-side (observed live)."""
+        issued while a fresh agent is still CREATING is accepted (202) but is not
+        durably applied until the agent settles."""
         definition, deployed = self._deployed()
         deployed['Description'] = 'A test agent'
         helper, client = make_agent_helper()
@@ -815,7 +809,7 @@ class TestUpdateAgentFullReplacementSemantics:
         assert order == ['update_agent', 'tag_resource']
 
     def test_update_never_sends_agent_lifecycle(self):
-        """UpdateAgent does not accept AgentLifecycle (ParamValidationError live)."""
+        """UpdateAgent does not accept AgentLifecycle (raises ParamValidationError)."""
         definition, deployed = self._deployed()
         deployed['WelcomeMessage'] = 'drifted'
         helper, client = make_agent_helper()

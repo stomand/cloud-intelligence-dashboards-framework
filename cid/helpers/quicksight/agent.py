@@ -46,8 +46,8 @@ class Agent(CidBase):
     def get(self, agent_id: str) -> dict:
         """ Read an Agent by id via DescribeAgent; return None when it does not exist.
 
-        Existence/provenance checks MUST use describe_agent by id: ListAgents does NOT
-        surface agents in PREVIEW or FAILED states (observed live) — ListAgents is
+        Existence/provenance checks MUST use describe_agent by id: ListAgents does not
+        surface agents in every lifecycle state (e.g. PREVIEW or FAILED) — it is
         enumeration-only.
 
         :param agent_id: the Agent id
@@ -88,8 +88,7 @@ class Agent(CidBase):
 
         Polls every ``interval`` seconds up to ``timeout`` seconds. FAIL FAST: if
         ``AgentStatus`` becomes FAILED, stop polling immediately and raise including the
-        agent id and the Agent's ``ErrorMessage`` field, without waiting for the timeout
-        ( — observed live: a minimal agent went UPDATING -> FAILED).
+        agent id and the Agent's ``ErrorMessage`` field, without waiting for the timeout.
 
         :param agent_id: the Agent id
         :param timeout: maximum seconds to wait (default 300)
@@ -124,8 +123,8 @@ class Agent(CidBase):
         """ Delete an Agent, tolerating a missing target.
 
         A ResourceNotFoundException is treated as success (the target is already gone).
-        On ConflictException while the Agent is UPDATING/CREATING (observed live), wait
-        for the status to settle and retry, up to ``timeout`` seconds total.
+        On ConflictException while the Agent is UPDATING/CREATING, wait for the status
+        to settle and retry, up to ``timeout`` seconds total.
 
         :param agent_id: the Agent id
         :param timeout: maximum total seconds to retry through ConflictException (default 300)
@@ -162,17 +161,10 @@ class Agent(CidBase):
     def wait_settled(self, agent_id: str, timeout: int = 300, interval: int = 5) -> dict:
         """ Poll DescribeAgent until the agent leaves the transitional CREATING/UPDATING states.
 
-        ROOT-CAUSE GUARD (observed live): CreateAgent with a PUBLISHED lifecycle starts an
-        asynchronous publish workflow. Issuing a mutating call (UpdateAgent, TagResource)
-        against the agent BEFORE that workflow settles corrupts the service-internal
-        resource registry: a second overlapping publish leaves duplicate internal records
-        for the same agent (TagResource then fails with ``InvalidParameterValueException:
-        A resource with the same resourceName but a different internalId already exists:
-        PUBLISHED-<guid>``), the Quick console shows the agent's linked Space as
-        "resources unavailable", and chatting with the agent errors out — even though
-        DescribeAgent output looks completely healthy. A console remove/re-add of the same
-        Space repairs it because the console mutates a SETTLED agent. Every mutating call
-        against a freshly created agent must therefore wait for the status to settle first.
+        CreateAgent with a PUBLISHED lifecycle starts an asynchronous publish workflow,
+        during which the agent reports a transitional CREATING/UPDATING status. Mutating
+        calls (UpdateAgent, TagResource) are only issued once that workflow settles, so
+        every post-create mutation waits for the status to leave CREATING/UPDATING first.
 
         Unlike :meth:`wait_active` this never raises: provenance and tag writes are
         best-effort, so a timeout logs a warning and returns the last-seen agent.
@@ -201,8 +193,8 @@ class Agent(CidBase):
     def _carry_through_update_params(self, agent: dict, agent_id: str) -> dict:
         """ Base UpdateAgent params carrying the DEPLOYED configuration through.
 
-        UpdateAgent has FULL-REPLACEMENT semantics for the configuration fields
-        (observed live): omitting ``StarterPrompts``, ``WelcomeMessage``,
+        UpdateAgent has FULL-REPLACEMENT semantics for the configuration fields:
+        omitting ``StarterPrompts``, ``WelcomeMessage``,
         ``CustomPromptInput`` or ``Description`` on an UpdateAgent call CLEARS them on
         the agent. Every UpdateAgent call must therefore start from the deployed values
         and override only what it means to change.
@@ -241,10 +233,8 @@ class Agent(CidBase):
             UpdateAgent. :meth:`_create` already bakes the marker into the CreateAgent
             Description, so for freshly created agents this is a read-only no-op; the
             UpdateAgent path only fires for pre-existing agents missing the marker.
-            UpdateAgent has FULL-REPLACEMENT semantics (observed live: a
-            Name+Description-only marker write WIPED the deployed persona, starter
-            prompts and welcome message), so the whole deployed configuration is
-            carried through on every attempt; and
+            UpdateAgent has FULL-REPLACEMENT semantics, so the whole deployed
+            configuration is carried through on every attempt; and
         (b) TagResource on the agent ARN with the CID provenance tag — log-and-continue
             on failure, mirroring QuickSight.set_tags.
 
@@ -252,19 +242,11 @@ class Agent(CidBase):
         tag write is tolerated-on-failure while the Description marker is the primary
         signal.
 
-        MUTATION SAFETY (root cause of the live "resources unavailable"/broken-chat
-        bug): a freshly created agent runs an asynchronous publish workflow
-        (CREATING/UPDATING). Issuing UpdateAgent against it mid-publish is sometimes
-        ACCEPTED and spawns a second overlapping publish, leaving duplicate internal
-        ``PUBLISHED-<internalId>`` records that break the console's resource
-        resolution and the chat runtime, while DescribeAgent still looks healthy.
-        TagResource mid-publish is either silently dropped (202-and-ignored) or fails
-        with an internalId-conflict error. This method therefore NEVER mutates a
-        transitional agent: it waits for the status to settle (:meth:`wait_settled`)
-        before the marker write, and settles again after a marker write (which itself
-        triggers a republish) before the tag write. If the agent never settles, the
-        marker write is skipped with a WARNING instead of risking corruption — the
-        tag is still attempted and is_cid_managed accepts either mechanism.
+        This method only mutates a SETTLED agent: it waits for the status to leave
+        CREATING/UPDATING (:meth:`wait_settled`) before the marker write, and settles
+        again after the marker write (which itself triggers a republish) before the tag
+        write. If the agent never settles, the marker write is skipped with a WARNING
+        and the tag is still attempted (is_cid_managed accepts either mechanism).
 
         :param agent_arn: the Agent ARN (tag target)
         :param agent_id: the Agent id (describe/update target)
@@ -283,15 +265,15 @@ class Agent(CidBase):
                 break
             status = agent.get('AgentStatus')
             if status in ('CREATING', 'UPDATING'):
-                # NEVER mutate a mid-publish agent (see MUTATION SAFETY above). The
-                # settle-wait also protects the tag write below: a fresh agent with
-                # the marker already baked in by _create still needs to settle here.
+                # Only mutate a settled agent. The settle-wait also protects the tag
+                # write below: a fresh agent with the marker already baked in by
+                # _create still needs to settle here.
                 if elapsed >= timeout:
                     logger.warning(
                         f'Could not verify the provenance of agent {agent_id!r}: the agent was '
-                        f'still {status} after {timeout} seconds and a mid-publish UpdateAgent '
-                        f'corrupts the agent (observed live). The CID provenance tag write is '
-                        f'still attempted, so CID-managed detection may be unaffected.'
+                        f'still {status} after {timeout} seconds, so the provenance marker write '
+                        f'was skipped. The CID provenance tag write is still attempted, so '
+                        f'CID-managed detection may be unaffected.'
                     )
                     break
                 logger.debug(
@@ -334,13 +316,12 @@ class Agent(CidBase):
                 elapsed += interval
         if marker_written:
             # The marker UpdateAgent itself triggers a republish (UPDATING). Settle
-            # again before tagging: TagResource against a transitional agent is
-            # dropped or fails with an internalId conflict (observed live).
+            # again before tagging: TagResource is only issued against a settled agent.
             self.wait_settled(agent_id, timeout=timeout, interval=interval)
 
         # (b) provenance tag: log-and-continue on failure. Only issued against a
-        # settled agent (a TagResource call made while the agent is transitional is
-        # accepted but dropped, or fails on duplicate internalIds — observed live).
+        # settled agent (TagResource is issued once the agent is out of the
+        # transitional CREATING/UPDATING states).
         try:
             self.client.tag_resource(
                 ResourceArn=agent_arn,
@@ -392,7 +373,7 @@ class Agent(CidBase):
 ); persona / ``StarterPrompts`` / ``WelcomeMessage`` are full-replacement
         values; and ``Name`` is included on EVERY ``UpdateAgent`` call because
         the API requires it. ``UpdateAgent`` has FULL-REPLACEMENT semantics
-        (omitted configuration fields are cleared — observed live), so every update
+        (omitted configuration fields are cleared), so every update
         starts from the deployed configuration (including the ``Description``, which
         carries the CID-managed provenance marker written by :meth:`write_provenance`)
         and overrides only the managed fields. ``lifecycle`` is create-only:
@@ -446,26 +427,19 @@ class Agent(CidBase):
                 welcome_message, lifecycle, space_arns, connector_arns) -> dict:
         """ CreateAgent carrying the full definition, then Space attach via UpdateAgent.
 
-        The CID-managed provenance marker is baked into the Description AT CREATE TIME
-: a post-create UpdateAgent marker write against the still-publishing
-        agent spawns an overlapping publish workflow that corrupts the service-internal
-        resource registry (duplicate ``PUBLISHED-<internalId>`` records — observed live
-        as the console showing the linked Space "resources unavailable" and chat
-        erroring out, while DescribeAgent looks healthy). Baking the marker in makes
-        the post-create :meth:`write_provenance` marker step a read-only no-op.
+        The CID-managed provenance marker is baked into the Description at create time
+        so the post-create :meth:`write_provenance` marker step is a read-only no-op
+        and the create flow issues no marker UpdateAgent against a still-publishing
+        agent.
 
-        SPACE ATTACH SEQUENCING (observed live): passing ``Spaces`` inside the
-        CreateAgent call produces a broken Space association — the console shows the
-        linked Space as "resources unavailable" and chatting with the agent fails with
-        an internal server error, even after the create flow issues zero post-create
-        mutations. The ONLY known-good repair is the console's remove/re-add of the
-        same Space, which is an UpdateAgent ``SpacesToRemove``/``SpacesToAdd`` pair
-        against a SETTLED, ACTIVE agent. The create path therefore mirrors the
-        known-good half of that repair: CreateAgent WITHOUT ``Spaces``, wait for the
-        publish workflow to settle (:meth:`wait_settled`), then attach the Spaces via
-        UpdateAgent ``SpacesToAdd`` carrying the full deployed configuration through
+        Spaces are attached after the agent reaches ACTIVE rather than inline on
+        CreateAgent: the create path issues CreateAgent WITHOUT ``Spaces``, waits for
+        the publish workflow to settle (:meth:`wait_settled`), then attaches the Spaces
+        via UpdateAgent ``SpacesToAdd`` carrying the full deployed configuration through
         (full-replacement semantics; ``Name`` required; ``AgentLifecycle`` is
-        create-only and never sent on update).
+        create-only and never sent on update). Separating creation from
+        knowledge-source association keeps the two as independent, retryable steps and
+        matches the console's attach sequence.
         """
         params = {
             'AwsAccountId': self.account_id,
@@ -484,8 +458,8 @@ class Agent(CidBase):
             params['WelcomeMessage'] = welcome_message
         if lifecycle is not None:
             params['AgentLifecycle'] = lifecycle
-        # Spaces are NOT passed at create time (see SPACE ATTACH SEQUENCING above);
-        # they are attached below via UpdateAgent SpacesToAdd against the settled agent.
+        # Spaces are attached after the agent settles (see the docstring above), via
+        # the UpdateAgent SpacesToAdd call below, not inline on CreateAgent.
         if connector_arns:
             params['ActionConnectors'] = sorted(connector_arns)
         logger.info(f'Creating agent {agent_id!r}.')
@@ -504,12 +478,11 @@ class Agent(CidBase):
     def _attach_spaces_after_create(self, agent_id, space_arns, timeout: int = 300, interval: int = 5) -> None:
         """ Attach Spaces to a freshly created agent via UpdateAgent ``SpacesToAdd``.
 
-        Mirrors the known-good console repair path: waits for the agent's initial
-        publish workflow to settle (:meth:`wait_settled` — never mutate a
-        CREATING/UPDATING agent), then issues one UpdateAgent with ``SpacesToAdd``
-        carrying the full deployed configuration through (full-replacement semantics;
-        ``Name`` required). Skips ARNs the agent already carries. A residual
-        ConflictException retries within the shared budget ( pattern).
+        Waits for the agent's initial publish workflow to settle (:meth:`wait_settled`
+        — a CREATING/UPDATING agent is never mutated), then issues one UpdateAgent with
+        ``SpacesToAdd`` carrying the full deployed configuration through
+        (full-replacement semantics; ``Name`` required). Skips ARNs the agent already
+        carries. A residual ConflictException retries within the shared budget.
         """
         agent = self.wait_settled(agent_id, timeout=timeout, interval=interval)
         if agent is None:
@@ -581,7 +554,7 @@ class Agent(CidBase):
 
         drifted = ', '.join(sorted(field for field, differs in drift.items() if differs))
         logger.info(f'Agent {agent_id!r} configuration drifted ({drifted}). Updating.')
-        # UpdateAgent has FULL-REPLACEMENT semantics (observed live): omitted
+        # UpdateAgent has FULL-REPLACEMENT semantics: omitted
         # configuration fields are CLEARED. Start from the deployed configuration
         # (including the Description, which carries the CID provenance marker) and
         # override only the managed fields.
