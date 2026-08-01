@@ -120,6 +120,7 @@ Create Agent Command Options:
  --agent-id TEXT                   Agent id from the catalog (a category-grouped picker is shown when omitted)
  --space TEXT                      Name of a Space to use instead of the per-agent default Space (bring-your-own Space)
  --cleanup-space                   Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies
+ --repair                          Detach and re-attach the agent Spaces to rewrite the links (recovers an agent whose Space shows as unavailable although it describes as healthy)
 ```
 
 Example with a bring-your-own Space:

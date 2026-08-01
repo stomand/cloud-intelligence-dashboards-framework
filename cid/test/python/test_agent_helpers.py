@@ -1158,3 +1158,146 @@ def test_write_provenance_conflict_settles_then_marker_written():
     assert kwargs['Name'] == 'My Space'
     assert CID_MANAGED_MARKER in kwargs['Description']
     assert kwargs['Description'].startswith('FinOps knowledge')
+
+
+# ======================================================================
+# UpdateAgent partial association failures + Space link repair
+# ======================================================================
+
+
+class TestAssociationFailureChecks:
+    """UpdateAgent reports partial association failures IN-BAND (FailedToAddSpaces /
+    FailedToRemoveSpaces and the action-connector twins), not as exceptions: an HTTP
+    200 can carry per-ARN failures. Every association-carrying UpdateAgent checks the
+    response and raises, or the deployed associations silently diverge."""
+
+    def test_attach_raises_when_the_response_reports_a_failed_add(self):
+        helper, client = make_agent_helper()
+        definition = base_definition()
+        wire_create_lifecycle(client, created_agent_shape(definition))
+        client.create_agent.return_value = {'Arn': 'arn:new-agent'}
+        client.update_agent.return_value = {
+            'FailedToAddSpaces': [
+                {'Arn': SPACE_ARNS[0], 'ErrorCode': 'AccessDenied', 'ErrorMessage': 'not authorized'},
+            ],
+        }
+
+        with pytest.raises(CidError, match='association failures') as excinfo:
+            helper.create_or_update(definition, SPACE_ARNS)
+
+        assert SPACE_ARNS[0] in str(excinfo.value)
+        assert 'AccessDenied' in str(excinfo.value)
+
+    def test_update_raises_when_the_response_reports_a_failed_remove(self):
+        helper, client = make_agent_helper()
+        definition = base_definition()
+        stale_arn = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:space/stale-space'
+        deployed = deployed_agent_matching(definition, SPACE_ARNS + [stale_arn])
+        client.describe_agent.return_value = {'Agent': deployed}
+        client.update_agent.return_value = {
+            'FailedToRemoveSpaces': [{'Arn': stale_arn, 'ErrorCode': 'InternalFailure'}],
+        }
+
+        with pytest.raises(CidError, match='association failures') as excinfo:
+            helper.create_or_update(definition, SPACE_ARNS)
+
+        assert stale_arn in str(excinfo.value)
+
+    def test_a_clean_response_raises_nothing(self):
+        helper, client = make_agent_helper()
+        definition = base_definition()
+        wire_create_lifecycle(client, created_agent_shape(definition))
+        client.create_agent.return_value = {'Arn': 'arn:new-agent'}
+        client.update_agent.return_value = {'Arn': 'arn:new-agent', 'AgentStatus': 'UPDATING'}
+
+        result = helper.create_or_update(definition, SPACE_ARNS)
+
+        assert result['action'] == 'created'
+
+
+class TestRepairSpaceAssociations:
+    """repair_space_associations rewrites the Space links: one UpdateAgent detaching
+    every attached Space, a settle wait, then one UpdateAgent re-attaching the same
+    ARNs. Two calls because the API rejects the same ARN in both lists of one call."""
+
+    @staticmethod
+    def wire_repair_lifecycle(client, definition, space_arns):
+        """describe_agent returns the deployed agent; its Spaces empty once the
+        detach UpdateAgent has fired (so the re-attach sees them as missing)."""
+        deployed = deployed_agent_matching(definition, space_arns)
+
+        def describe(**kwargs):
+            spaces = [] if client.update_agent.call_count else sorted(space_arns)
+            return {'Agent': dict(deployed, Spaces=spaces)}
+        client.describe_agent.side_effect = describe
+
+    def test_repair_detaches_then_reattaches_the_same_spaces(self):
+        helper, client = make_agent_helper()
+        definition = base_definition()
+        self.wire_repair_lifecycle(client, definition, SPACE_ARNS)
+        client.update_agent.return_value = {}
+
+        assert helper.repair_space_associations(definition['agentId']) is True
+
+        assert client.update_agent.call_count == 2
+        detach, reattach = (call.kwargs for call in client.update_agent.call_args_list)
+        assert detach['SpacesToRemove'] == sorted(SPACE_ARNS)
+        assert 'SpacesToAdd' not in detach
+        assert reattach['SpacesToAdd'] == sorted(SPACE_ARNS)
+        assert 'SpacesToRemove' not in reattach
+
+    def test_repair_carries_the_deployed_config_through_both_calls(self):
+        """Full-replacement semantics: both UpdateAgent calls carry the deployed
+        Name/Description/StarterPrompts/WelcomeMessage/persona through."""
+        helper, client = make_agent_helper()
+        definition = base_definition()
+        self.wire_repair_lifecycle(client, definition, SPACE_ARNS)
+        client.update_agent.return_value = {}
+
+        helper.repair_space_associations(definition['agentId'])
+
+        for call in client.update_agent.call_args_list:
+            assert call.kwargs['Name'] == definition['name']
+            assert call.kwargs['StarterPrompts'] == definition['starterPrompts']
+            assert call.kwargs['WelcomeMessage'] == definition['welcomeMessage']
+            assert 'AgentLifecycle' not in call.kwargs
+
+    def test_repair_without_spaces_is_a_noop(self):
+        helper, client = make_agent_helper()
+        definition = base_definition()
+        client.describe_agent.return_value = {'Agent': deployed_agent_matching(definition, [])}
+
+        assert helper.repair_space_associations(definition['agentId']) is False
+
+        client.update_agent.assert_not_called()
+
+    def test_repair_raises_on_a_missing_agent(self):
+        helper, client = make_agent_helper()
+        client.describe_agent.side_effect = ResourceNotFoundException('not found')
+
+        with pytest.raises(CidError, match='not found'):
+            helper.repair_space_associations('missing-agent')
+
+    def test_failed_reattach_names_the_detached_spaces_and_the_recovery(self):
+        """When the re-attach fails after a successful detach, the agent is left
+        without its Spaces; the error says which and how to recover."""
+        helper, client = make_agent_helper()
+        definition = base_definition()
+        self.wire_repair_lifecycle(client, definition, SPACE_ARNS)
+        client.update_agent.side_effect = [{}, RuntimeError('boom')]
+
+        with pytest.raises(CidError, match='Re-run this command') as excinfo:
+            helper.repair_space_associations(definition['agentId'])
+
+        assert SPACE_ARNS[0] in str(excinfo.value)
+
+    def test_repair_detach_retries_through_residual_conflict(self):
+        helper, client = make_agent_helper()
+        definition = base_definition()
+        self.wire_repair_lifecycle(client, definition, SPACE_ARNS)
+        client.update_agent.side_effect = [ConflictException('busy'), {}, {}]
+
+        with patch('cid.helpers.quicksight.agent.time.sleep'):
+            assert helper.repair_space_associations(definition['agentId']) is True
+
+        assert client.update_agent.call_count == 3

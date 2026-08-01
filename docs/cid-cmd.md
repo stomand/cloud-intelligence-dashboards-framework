@@ -363,6 +363,7 @@ cid-cmd create-agent --agent-id finops --space 'My Team Space' -y
 | `--agent-id TEXT` | Agent id from the catalog (a category-grouped picker is shown when omitted) |
 | `--space TEXT` | Name of a Space to use instead of the per-agent default Space (bring-your-own Space) |
 | `--cleanup-space` | Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies |
+| `--repair` | Detach and re-attach the agent Spaces to rewrite the links (recovers an agent whose Space shows as unavailable although it describes as healthy) |
 
 #### Agent Prerequisites
 
@@ -423,6 +424,16 @@ Removal is strictly scoped. A dashboard resource is removed from the Space only 
 2. **unreferenced** — no catalog agent's dependencies reference it anymore.
 
 Resources added to the Space by other tools or by hand are never removed. The same flag is available on `delete-agent` to tidy a retained shared Space after an agent is removed.
+
+#### Repairing Space links (`--repair`)
+
+An agent can show its Space as unavailable (and fail chat) even though it describes as healthy — the stored link is broken in a way no read API surfaces. The opt-in flag rewrites the links:
+
+```bash
+cid-cmd create-agent --agent-id finops --repair
+```
+
+The repair detaches every attached Space, waits for the agent to settle, then re-attaches the same Spaces. Two separate calls, because the API rejects the same ARN in both the add and remove lists of one call, and an add alone can leave the broken link in place. A freshly created agent needs no repair, so the flag only acts on an agent that already exists.
 
 #### The launch library
 

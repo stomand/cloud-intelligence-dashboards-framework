@@ -308,6 +308,7 @@ def create_cur_proxy(ctx, cur_version, fields, **kwargs):
 @click.option('--agent-id', help='Agent id from the catalog', default=None)
 @click.option('--space', 'space_name', help='Name of a Space to use instead of the per-agent default Space', default=None)
 @click.option('--cleanup-space', help='Remove CID-managed Space resources no longer referenced by any agent', is_flag=True, default=None)
+@click.option('--repair', help='Detach and re-attach the agent Spaces to rewrite the links', is_flag=True, default=None)
 @click.option('-v', '--verbose', count=True)
 @click.option('-y', '--yes', help='confirm all', is_flag=True, default=False)
 @cid_command
@@ -323,6 +324,7 @@ def create_agent(ctx, **kwargs):
      --agent-id TEXT                       Agent id from the catalog (a category-grouped picker is shown when omitted)
      --space TEXT                          Name of a Space to use instead of the per-agent default Space (bring-your-own Space)
      --cleanup-space                       Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies
+     --repair                              Detach and re-attach the agent Spaces to rewrite the links (recovers an agent whose Space shows as unavailable although it describes as healthy)
     """
     ctx.obj.create_agent(**kwargs)
 

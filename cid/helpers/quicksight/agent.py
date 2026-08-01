@@ -16,6 +16,7 @@ from cid.helpers.quicksight.agent_logic import (
     CID_PROVENANCE_TAG_VALUE,
     CID_MANAGED_MARKER,
     PERSONA_API_FIELDS,
+    association_failures,
     persona_differs,
     compute_space_delta,
 )
@@ -225,6 +226,26 @@ class Agent(CidBase):
         if deployed_prompt:
             params['CustomPromptInput'] = {'NewPrompt': deployed_prompt}
         return params
+
+    def _raise_on_association_failures(self, response, agent_id: str) -> None:
+        """ Raise when an UpdateAgent response reports partial association failures.
+
+        UpdateAgent can return HTTP 200 while individual Space or action-connector
+        add/remove operations fail; the failures are reported only in the
+        ``FailedToAddSpaces`` / ``FailedToRemoveSpaces`` (and action-connector)
+        response lists. Every UpdateAgent that sends association deltas must check
+        them, or the deployed associations silently diverge from the requested ones.
+
+        :param response: the UpdateAgent response (None tolerated)
+        :param agent_id: the Agent id, for the error message
+        :raises CidError: when any association operation failed, naming each failed ARN
+        """
+        failures = association_failures(response)
+        if failures:
+            raise CidError(
+                f'UpdateAgent on agent {agent_id!r} reported association failures: '
+                + '; '.join(failures)
+            )
 
     def write_provenance(self, agent_arn: str, agent_id: str, timeout: int = 300, interval: int = 5) -> None:
         """ Dual CID_Managed provenance write for an Agent.
@@ -499,7 +520,8 @@ class Agent(CidBase):
             params['SpacesToAdd'] = to_add
             logger.info(f'Attaching {len(to_add)} Space(s) to agent {agent_id!r} via UpdateAgent.')
             try:
-                self.client.update_agent(**params)
+                response = self.client.update_agent(**params)
+                self._raise_on_association_failures(response, agent_id)
                 return
             except self.client.exceptions.ConflictException as exc:
                 if elapsed >= timeout:
@@ -514,6 +536,72 @@ class Agent(CidBase):
                 time.sleep(interval)
                 elapsed += interval
                 agent = self.wait_settled(agent_id, timeout=max(timeout - elapsed, interval), interval=interval) or agent
+
+    def repair_space_associations(self, agent_id: str, timeout: int = 300, interval: int = 5) -> bool:
+        """ Rewrite the agent's Space links: detach every Space, then re-attach it.
+
+        An agent whose Space links were written by an earlier service version can show
+        the Space as unavailable (and fail chat) even though DescribeAgent reports it
+        attached and ACTIVE — the fault is in the stored link, which no read API
+        surfaces. The only recovery is to rewrite the link: one UpdateAgent with
+        ``SpacesToRemove`` for every attached Space, a settle wait, then one
+        UpdateAgent with ``SpacesToAdd`` for the same ARNs. Two calls because the API
+        rejects the same ARN in both lists in one call, and an add alone can leave the
+        stale link in place and append a duplicate.
+
+        Both calls carry the full deployed configuration through (full-replacement
+        semantics) and are checked for partial association failures. The re-attach
+        reuses :meth:`_attach_spaces_after_create` (settle wait, conflict retry,
+        failure check). If the re-attach fails after a successful detach, the agent is
+        left without its Spaces; the raised error says so and how to recover.
+
+        :param agent_id: the Agent id
+        :param timeout: maximum seconds per settle/retry budget (default 300)
+        :param interval: seconds between polls/retries (default 5)
+        :returns: True when Space links were rewritten; False when the agent has none
+        :raises CidError: when the agent is missing, stays busy past the budget, or an
+            association operation fails
+        """
+        agent = self.wait_settled(agent_id, timeout=timeout, interval=interval)
+        if agent is None:
+            raise CidError(f'Cannot repair agent {agent_id!r}: the agent was not found.')
+        space_arns = sorted(set(agent.get('Spaces') or ()))
+        if not space_arns:
+            logger.info(f'Agent {agent_id!r} has no Space to repair.')
+            return False
+        logger.info(f'Repairing agent {agent_id!r}: detaching and re-attaching {len(space_arns)} Space(s).')
+        elapsed = 0
+        while True:
+            params = self._carry_through_update_params(agent, agent_id)
+            params['SpacesToRemove'] = space_arns
+            try:
+                response = self.client.update_agent(**params)
+                break
+            except self.client.exceptions.ConflictException as exc:
+                if elapsed >= timeout:
+                    raise CidError(
+                        f'Could not detach Spaces from agent {agent_id!r}: the agent was still busy '
+                        f'(ConflictException) after {timeout} seconds. Last error: {exc}'
+                    ) from exc
+                logger.debug(
+                    f'Space detach on agent {agent_id!r} hit ConflictException; '
+                    f'retrying in {interval}s ({elapsed}/{timeout}s elapsed).'
+                )
+                time.sleep(interval)
+                elapsed += interval
+                agent = self.wait_settled(agent_id, timeout=max(timeout - elapsed, interval), interval=interval) or agent
+        self._raise_on_association_failures(response, agent_id)
+        try:
+            self._attach_spaces_after_create(agent_id, space_arns, timeout=timeout, interval=interval)
+        except self.client.exceptions.AccessDeniedException:
+            raise
+        except Exception as exc:
+            raise CidError(
+                f'The Space re-attach failed while repairing agent {agent_id!r}, leaving it detached '
+                f'from: {", ".join(space_arns)}. Re-run this command to re-attach. Error: {exc}'
+            ) from exc
+        self.wait_settled(agent_id, timeout=timeout, interval=interval)
+        return True
 
     def _update(self, agent, agent_id, name, desired_persona, starter_prompts,
                 welcome_message, lifecycle, desired_spaces, desired_connectors) -> dict:
@@ -579,5 +667,6 @@ class Agent(CidBase):
             params['ActionConnectorsToAdd'] = sorted(connectors_to_add)
         if connectors_to_remove:
             params['ActionConnectorsToRemove'] = sorted(connectors_to_remove)
-        self.client.update_agent(**params)
+        response = self.client.update_agent(**params)
+        self._raise_on_association_failures(response, agent_id)
         return {'agentId': agent_id, 'arn': arn, 'action': 'updated'}

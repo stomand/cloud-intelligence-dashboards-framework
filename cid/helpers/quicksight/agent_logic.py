@@ -318,6 +318,49 @@ def compute_stale_removals(space_arns, referenced_arns, managed_arns, remove_sta
     return (set(space_arns or ()) & set(managed_arns or ())) - set(referenced_arns or ())
 
 
+# UpdateAgent reports partial association failures IN-BAND (response lists), not as
+# exceptions: an HTTP 200 can still carry per-ARN add/remove failures. Each list
+# entry is a structure with 'Arn', 'ErrorMessage' and 'ErrorCode'.
+ASSOCIATION_FAILURE_FIELDS = (
+    ('FailedToAddSpaces', 'add Space'),
+    ('FailedToRemoveSpaces', 'remove Space'),
+    ('FailedToAddActionConnectors', 'add action connector'),
+    ('FailedToRemoveActionConnectors', 'remove action connector'),
+)
+
+
+def association_failures(response) -> list:
+    """Extract UpdateAgent partial association failures as readable strings.
+
+    UpdateAgent can succeed (HTTP 200) while individual Space or action-connector
+    add/remove operations fail; those failures are reported only in the response
+    lists (:data:`ASSOCIATION_FAILURE_FIELDS`). Ignoring them leaves the deployed
+    associations silently diverged from the requested ones, so every caller that
+    sends association deltas must check this.
+
+    :param response: the UpdateAgent response dict; None and non-dict values are
+        tolerated (treated as carrying no failures), as are absent or non-list fields
+    :returns: list of human-readable failure strings, one per failed ARN, e.g.
+        ``failed to add Space arn:... (AccessDenied: not authorized)``; empty when
+        every association operation succeeded
+    """
+    failures = []
+    if not isinstance(response, dict):
+        return failures
+    for field, operation in ASSOCIATION_FAILURE_FIELDS:
+        entries = response.get(field)
+        if not isinstance(entries, (list, tuple)):
+            continue
+        for entry in entries:
+            if isinstance(entry, dict):
+                arn = entry.get('Arn') or '<unknown ARN>'
+                detail = ': '.join(str(part) for part in (entry.get('ErrorCode'), entry.get('ErrorMessage')) if part)
+                failures.append(f'failed to {operation} {arn}' + (f' ({detail})' if detail else ''))
+            else:
+                failures.append(f'failed to {operation} {entry}')
+    return failures
+
+
 # CID_Managed provenance: dual mechanism.
 # (a) resource tag written via TagResource (tolerated failure), and
 # (b) marker string embedded in the resource Description — the existing

@@ -64,7 +64,7 @@ create_agent = Cid.create_agent.__wrapped__
 QS_READ_ONLY_ALLOWED = {'ensure_subscription', 'describe_user', 'describe_group', 'list_dashboards'}
 
 
-AGENT_MUTATING_METHODS = ('create_or_update', 'delete', 'grant_owner', 'write_provenance', 'wait_active')
+AGENT_MUTATING_METHODS = ('create_or_update', 'delete', 'grant_owner', 'write_provenance', 'wait_active', 'repair_space_associations')
 
 
 def dash_id(key):
@@ -684,7 +684,7 @@ def test_property_12_missing_dependency_warnings_carry_correct_guidance(req_flag
     for key in missing_required:
         matching = [line for line in lines if key in line and 'required dashboard' in line]
         assert len(matching) == 1, f'expected one required-dashboard warning for {key!r}'
-        assert 'CID/CUDOS' in matching[0]
+        assert 'https://catalog.workshops.aws/awscid/en-US)' in matching[0]
         assert 'cid-cmd' not in matching[0]
     for key in missing_optional:
         matching = [line for line in lines if key in line and 'optional dashboard' in line]
@@ -1290,3 +1290,49 @@ class TestUnknownStatusFallback:
         assert output.count('?[') == 3
         assert DEPLOYED_MARK not in output
         assert all(not entry['deployed'] for entries in listing.values() for entry in entries)
+
+
+# ======================================================================
+# --repair flag plumbing
+# ======================================================================
+
+
+class TestRepairFlag:
+    """--repair rewrites the Space links of a PRE-EXISTING agent (detach +
+    re-attach through Agent.repair_space_associations) and never fires on a fresh
+    create — a freshly created agent needs no repair."""
+
+    @staticmethod
+    def existing_cid_agent():
+        """A deployed, CID-managed agent (Description carries the provenance marker)."""
+        return {
+            'AgentId': AGENT_ID, 'Arn': AGENT_ARN, 'AgentStatus': 'ACTIVE',
+            'Name': 'Test Agent', 'Description': f'A test agent {CID_MANAGED_MARKER}',
+            'Spaces': [SPACE_ARN],
+        }
+
+    def test_repair_flag_repairs_a_pre_existing_agent(self):
+        definition = make_definition(required=('dash',))
+        cid_obj = make_create_cid(definition, present=('dash',), existing_agent=self.existing_cid_agent())
+        reset_parameters({'repair': True})
+
+        run_create(cid_obj, agent_id=AGENT_ID)
+
+        cid_obj.agent.repair_space_associations.assert_called_once_with(AGENT_ID)
+
+    def test_repair_flag_is_skipped_on_a_fresh_create(self):
+        definition = make_definition(required=('dash',))
+        cid_obj = make_create_cid(definition, present=('dash',))
+        reset_parameters({'repair': True})
+
+        run_create(cid_obj, agent_id=AGENT_ID)
+
+        cid_obj.agent.repair_space_associations.assert_not_called()
+
+    def test_no_repair_without_the_flag(self):
+        definition = make_definition(required=('dash',))
+        cid_obj = make_create_cid(definition, present=('dash',), existing_agent=self.existing_cid_agent())
+
+        run_create(cid_obj, agent_id=AGENT_ID)
+
+        cid_obj.agent.repair_space_associations.assert_not_called()

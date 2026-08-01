@@ -787,11 +787,11 @@ class Cid():
     # Deployment guidance pointers.
     # These messages MUST NOT name any cid-cmd command.
     CID_DASHBOARDS_GUIDANCE = (
-        'the Cloud Intelligence Dashboards (CID/CUDOS) foundational deployment guidance '
+        'the CID dashboards deployment guide '
         '(https://catalog.workshops.aws/awscid/en-US)'
     )
     DATA_COLLECTION_GUIDANCE = (
-        'the separate CID Data Collection deployment guidance '
+        'the Data Collection deployment guide '
         '(https://catalog.workshops.aws/awscid/en-US/data-collection)'
     )
     # QuickSight user roles entitled to create Quick Agents
@@ -823,6 +823,7 @@ class Cid():
         target_agent_id = definition['agentId']
         space_name = space_name or get_parameters().get('space-name') or get_parameters().get('space')
         remove_stale = bool(get_parameters().get('cleanup-space'))
+        repair = bool(get_parameters().get('repair'))
         access_denied = self.space.client.exceptions.AccessDeniedException
         try:
             # 8. resolve the target Space
@@ -870,6 +871,12 @@ class Cid():
             if result.get('action') == 'created' and result.get('arn'):
                 # dual provenance write: tag (tolerated failure) + Description marker
                 self.agent.write_provenance(result['arn'], target_agent_id)
+            # --repair: detach and re-attach the Space links so the service rewrites
+            # them. Recovers a pre-existing agent whose Space shows as unavailable
+            # although it describes as healthy. A freshly created agent needs no repair.
+            if repair and result.get('action') != 'created':
+                if self.agent.repair_space_associations(target_agent_id):
+                    cid_print(f'Space links of agent <BOLD>{target_agent_id}<END> rewritten (detach + re-attach).')
             # 12. owner grant: the 5-action bundle as one set
             self.agent.grant_owner(target_agent_id, principal_arn)
             # 13. PUBLISHED lifecycle: wait for ACTIVE; fail fast on FAILED
@@ -1239,34 +1246,39 @@ class Cid():
         classification = classify_dependencies(required, optional, present_keys)
         if not classification['present']:
             raise CidError(
-                'No CID dashboards required by this agent are deployed in this account and region, '
-                'so there is nothing to build the agent knowledge Space over. Nothing was created. '
-                f'Please deploy the foundational dashboards first, following {self.CID_DASHBOARDS_GUIDANCE}; '
-                f'for advanced capabilities, also follow {self.DATA_COLLECTION_GUIDANCE}.'
+                'None of the dashboards this agent needs are deployed in this account and region. '
+                'Nothing was created. Deploy the foundational dashboards first — see '
+                f'{self.CID_DASHBOARDS_GUIDANCE}. For advanced dashboards, also see '
+                f'{self.DATA_COLLECTION_GUIDANCE}.'
             )
         for key in classification['missing_required']:
             cid_print(
-                f'<YELLOW>Warning:<END> the required dashboard <BOLD>{key}<END> is not deployed. '
-                f'To enable it, follow {self.CID_DASHBOARDS_GUIDANCE}. Proceeding with the available dashboards.'
+                f'<YELLOW>Warning:<END> required dashboard <BOLD>{key}<END> is not deployed. '
+                f'To add it, follow {self.CID_DASHBOARDS_GUIDANCE}. '
+                'Proceeding with the available dashboards.'
             )
         for key in classification['missing_optional']:
             cid_print(
-                f'<YELLOW>Warning:<END> the optional dashboard <BOLD>{key}<END> is not deployed. The related '
-                'capabilities require that Advanced dashboard, which depends on the separate Data Collection '
-                f'deployment — see {self.DATA_COLLECTION_GUIDANCE}. Proceeding with the available dashboards.'
+                f'<YELLOW>Warning:<END> optional dashboard <BOLD>{key}<END> is not deployed. '
+                f'To add it, follow {self.DATA_COLLECTION_GUIDANCE}. '
+                'Proceeding with the available dashboards.'
             )
         present_dashboard_arns = [deployed_arns_by_id[key_to_dashboard_id[key]] for key in classification['present']]
         # dataset knowledge presence via the existing read-only discovery
         present_dataset_arns = []
+        missing_datasets = []
         for key in dataset_keys:
             arn = self._find_deployed_dataset_arn(key)
             if arn:
                 present_dataset_arns.append(arn)
             else:
-                cid_print(
-                    f'<YELLOW>Warning:<END> the dataset <BOLD>{key}<END> is not present in this account, so it '
-                    'will not be attached as knowledge. This command never creates or deploys datasets.'
-                )
+                missing_datasets.append(key)
+        if missing_datasets:
+            label = 'datasets' if len(missing_datasets) > 1 else 'dataset'
+            cid_print(
+                f'<YELLOW>Warning:<END> {label} <BOLD>{", ".join(missing_datasets)}<END> not found — '
+                'skipped as knowledge. This command does not create datasets.'
+            )
         return {
             'classification': classification,
             'dashboard_arns': present_dashboard_arns,
