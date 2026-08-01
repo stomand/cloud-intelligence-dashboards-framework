@@ -1,11 +1,5 @@
-# Operations agent (launch library).
-# Loaded via dashboards/catalog.yaml like any dashboard resource file;
+# Operations agent (launch library). Loaded via dashboards/catalog.yaml;
 # personaFile is resolved relative to this file.
-# All dependsOn keys reference existing core catalog entries (referential
-# completeness). The core catalog carries no dedicated
-# CloudWatch dashboard key, so the foundational usage dashboards serve as the
-# operational visibility surface, with Trusted Advisor and Compute Optimizer
-# datasets attached as operational-health knowledge (DATA_SET, never deployed).
 agents:
   operations:
     category: Additional
@@ -17,9 +11,9 @@ agents:
       findings and Compute Optimizer recommendations to spot operational risk.
     dependsOn:
       spaces: [cid-dashboards-space]
-      dashboards: [CUDOSv5, CID]                 # Required: foundational operational visibility
-      optionalDashboards: [Trends]               # Optional: trend/anomaly context
-      datasets:                                  # operational-health knowledge, attached as DATA_SET when present
+      dashboards: [CUDOSv5, CID]
+      optionalDashboards: [Trends]
+      datasets:
         - ta-organizational-view
         - compute_optimizer_all_options
       knowledgeBases: []

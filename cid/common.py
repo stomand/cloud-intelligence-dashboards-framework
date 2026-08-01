@@ -33,6 +33,7 @@ from cid.helpers.quicksight.agent_logic import (
     build_console_url,
     classify_dependencies,
     derive_space_id,
+    describe_drift,
     is_cid_managed,
     select_database_from_candidates,
     validate_caps,
@@ -799,12 +800,31 @@ class Cid():
 
     @command
     def create_agent(self, agent_id: str=None, space_name: str=None, **kwargs):
-        """Create or update a Quick Agent and its knowledge Space over already-deployed dashboards.
+        """Create a Quick Agent and its knowledge Space over already-deployed dashboards.
 
         Prerequisite-only flow: never deploys a dashboard, never creates
         a dataset, and never touches the data layer (CUR, Data Exports, Data Collection).
         Missing prerequisites are resolved by guidance, not by deployment.
+
+        When the agent is already deployed, the command shows what differs from the
+        catalog and asks whether to update instead (``--update yes`` to skip the
+        prompt; ``-y`` implies yes).
         """
+        return self._agent_apply_flow(agent_id=agent_id, space_name=space_name, mode='create')
+
+    @command
+    def update_agent(self, agent_id: str=None, space_name: str=None, **kwargs):
+        """Update a deployed CID-managed Quick Agent to match the catalog.
+
+        Requires the agent to exist (run create-agent first). Shows which
+        catalog-managed fields drifted and asks for confirmation before
+        overriding them. Space associations are reconciled additively by
+        default; ``--sync-spaces`` opts into exact synchronization.
+        """
+        return self._agent_apply_flow(agent_id=agent_id, space_name=space_name, mode='update')
+
+    def _agent_apply_flow(self, agent_id: str=None, space_name: str=None, mode: str='create'):
+        """Shared create-agent / update-agent flow; ``mode`` gates the existing-agent branch."""
         # 0. gen-AI availability pre-check: create nothing when unavailable
         self._check_genai_availability()
         # 1. DETECT-AND-REQUIRE Enterprise subscription, read-only
@@ -817,13 +837,60 @@ class Cid():
         validate_caps(definition)
         # 6. owner principal: registered QuickSight user with Author Pro
         principal_arn = self._resolve_quicksight_principal()
+
+        # 6b. existing-agent gate — BEFORE any create or modify call.
+        target_agent_id = definition['agentId']
+        existing_agent = self.agent.get(target_agent_id)
+        if existing_agent is not None and not self._agent_is_cid_managed(existing_agent):
+            raise CidError(
+                f'An agent with id {target_agent_id!r} already exists but was not created by '
+                'Cloud Intelligence Dashboards. Refusing to modify it. Please rename the catalog '
+                'agent id or remove the existing agent, then re-run.'
+            )
+        drift = describe_drift(definition, existing_agent) if existing_agent is not None else []
+        if mode == 'create' and existing_agent is not None:
+            drift_note = (f'It differs from the catalog in: <BOLD>{", ".join(drift)}<END>.'
+                          if drift else 'Its managed fields match the catalog.')
+            cid_print(f'Agent <BOLD>{target_agent_id}<END> is already deployed. {drift_note}')
+            if not isatty() and not getattr(self, 'all_yes', False) and get_parameters().get('update') is None:
+                raise CidError(
+                    f'Agent {target_agent_id!r} is already deployed. Pass --update yes to update it '
+                    f'to the catalog, or run cid-cmd update-agent --agent-id {agent_key}.'
+                )
+            if not get_yesno_parameter(
+                    param_name='update',
+                    message=f'Update agent {target_agent_id} to match the catalog? '
+                            'This overrides console customizations to the managed fields',
+                    default='no'):
+                cid_print(f'No changes made. Run <BOLD>cid-cmd update-agent --agent-id {agent_key}<END> when ready.')
+                return target_agent_id
+        if mode == 'update':
+            if existing_agent is None:
+                raise CidError(
+                    f'Agent {target_agent_id!r} is not deployed, so there is nothing to update. '
+                    f'Run cid-cmd create-agent --agent-id {agent_key} first.'
+                )
+            if drift:
+                cid_print(f'Agent <BOLD>{target_agent_id}<END> differs from the catalog in: '
+                          f'<BOLD>{", ".join(drift)}<END>.')
+                if not isatty() and not getattr(self, 'all_yes', False) and get_parameters().get('confirm-update') is None:
+                    # unattended update-agent: the user asked for the update explicitly
+                    logger.info('Unattended mode: applying the update without a prompt.')
+                elif not get_yesno_parameter(
+                        param_name='confirm-update',
+                        message=f'Update agent {target_agent_id}? '
+                                'This overrides console customizations to these fields',
+                        default='yes'):
+                    cid_print('No changes made.')
+                    return target_agent_id
+
         # 7. read-only dependency pre-flight — NEVER deploys
         dependencies = self._preflight_agent_dependencies(definition)
 
-        target_agent_id = definition['agentId']
         space_name = space_name or get_parameters().get('space-name') or get_parameters().get('space')
         remove_stale = bool(get_parameters().get('cleanup-space'))
         repair = bool(get_parameters().get('repair'))
+        sync_spaces = bool(get_parameters().get('sync-spaces'))
         access_denied = self.space.client.exceptions.AccessDeniedException
         try:
             # 8. resolve the target Space
@@ -845,16 +912,9 @@ class Cid():
                 self.space.update_resources(space_id, dependencies['dataset_arns'], resource_type='DATA_SET')
             # 10. optional pre-existing knowledge bases; never create a KB
             self._attach_knowledge_bases(space_id, dependencies['knowledge_base_arns'])
-            # 11. conflict guard via DescribeAgent — never ListAgents
-            existing_agent = self.agent.get(target_agent_id)
-            if existing_agent is not None and not self._agent_is_cid_managed(existing_agent):
-                raise CidError(
-                    f'An agent with id {target_agent_id!r} already exists but was not created by '
-                    'Cloud Intelligence Dashboards. Refusing to modify it. Please rename the catalog '
-                    'agent id or remove the existing agent, then re-run.'
-                )
+            # 11. create-or-update (existence and provenance were gated in step 6b)
             try:
-                result = self.agent.create_or_update(definition, [space_arn])
+                result = self.agent.create_or_update(definition, [space_arn], sync_spaces=sync_spaces)
             except access_denied:
                 raise  # no further create/modify (incl. cleanup) after AccessDenied
             except (CidError, CidCritical):
@@ -871,10 +931,10 @@ class Cid():
             if result.get('action') == 'created' and result.get('arn'):
                 # dual provenance write: tag (tolerated failure) + Description marker
                 self.agent.write_provenance(result['arn'], target_agent_id)
-            # --repair: detach and re-attach the Space links so the service rewrites
-            # them. Recovers a pre-existing agent whose Space shows as unavailable
-            # although it describes as healthy. A freshly created agent needs no repair.
-            if repair and result.get('action') != 'created':
+            # --repair (update-agent): detach and re-attach the Space links so the
+            # service rewrites them. Recovers an agent whose Space shows as
+            # unavailable although it describes as healthy.
+            if repair and mode == 'update':
                 if self.agent.repair_space_associations(target_agent_id):
                     cid_print(f'Space links of agent <BOLD>{target_agent_id}<END> rewritten (detach + re-attach).')
             # 12. owner grant: the 5-action bundle as one set

@@ -1,11 +1,5 @@
-# Security agent (launch library).
-# Loaded via dashboards/catalog.yaml like any dashboard resource file;
+# Security agent (launch library). Loaded via dashboards/catalog.yaml;
 # personaFile is resolved relative to this file.
-# The core catalog carries no Security Hub dashboard key, so per referential
-# completeness this file references the closest existing keys:
-# the foundational dashboards for security-service spend/usage visibility and
-# the Trusted Advisor organizational view dataset as the compliance-findings
-# knowledge source (attached as DATA_SET when present, never deployed).
 agents:
   security:
     category: Additional
@@ -17,9 +11,9 @@ agents:
       correlates them with security-service usage across accounts.
     dependsOn:
       spaces: [cid-dashboards-space]
-      dashboards: [CUDOSv5, CID]                 # Required: usage/spend visibility incl. security services
-      optionalDashboards: [Trends]               # Optional: trend context for unusual activity
-      datasets:                                  # compliance knowledge, attached as DATA_SET when present
+      dashboards: [CUDOSv5, CID]
+      optionalDashboards: [Trends]
+      datasets:
         - ta-organizational-view
       knowledgeBases: []
       actionConnectors: []

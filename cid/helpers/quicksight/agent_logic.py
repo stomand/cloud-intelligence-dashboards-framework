@@ -6,7 +6,6 @@ covered cheaply by property-based tests (pytest + Hypothesis) and reused by the
 Space/Agent helpers and the Cid command handlers.
 """
 import logging
-from string import Template
 from collections import Counter
 
 from cid.exceptions import CidError
@@ -27,21 +26,6 @@ _CONSOLE_PATHS = {
     'agent': 'sn/account/{account_id}/agents/{resource_id}',
     'space': 'sn/account/{account_id}/spaces/{resource_id}',
 }
-
-
-def substitute_tokens(text: str, params: dict) -> str:
-    """Substitute ``${var}`` tokens in text with values from params.
-
-    Uses string.Template.safe_substitute semantics: known tokens are replaced,
-    unknown tokens are left intact (never raises on a missing key).
-
-    :param text: text possibly containing ``${var}`` tokens
-    :param params: mapping of token name to replacement value
-    :returns: text with all known tokens substituted
-    """
-    if text is None:
-        return text
-    return Template(str(text)).safe_substitute(params or {})
 
 
 def build_console_url(account_id: str, region: str, partition: str, domain: str, resource_kind: str, resource_id: str) -> str:
@@ -280,6 +264,45 @@ def compute_space_delta(desired, current) -> tuple:
     desired_set = set(desired or ())
     current_set = set(current or ())
     return (desired_set - current_set, current_set - desired_set)
+
+
+def describe_drift(definition: dict, deployed: dict) -> list:
+    """List the catalog-managed fields whose values differ from the deployed agent.
+
+    Compares the catalog definition against the DescribeAgent read shape and names
+    each drifted field so the user can see WHAT an update would change before
+    consenting to it. Fields the definition does not carry (None) are not managed
+    and never count as drift. Space associations are resolved later in the flow and
+    are not part of this report; ``lifecycle`` is create-only and excluded.
+
+    :param definition: agent definition from the catalog (same shape create_or_update takes)
+    :param deployed: the DescribeAgent read shape of the deployed agent
+    :returns: list of human-readable drifted-field names, e.g.
+        ``['persona.Identity', 'welcomeMessage']``; empty when nothing managed differs
+    """
+    drift = []
+    name = definition.get('name')
+    if name is not None and name != (deployed.get('Name') or deployed.get('AgentName')):
+        drift.append('name')
+    desired_persona = definition.get('persona') or {}
+    if desired_persona:
+        desired_normalized = _normalize_persona(desired_persona)
+        deployed_normalized = _normalize_persona(deployed.get('CustomPromptInterface') or {})
+        for field in PERSONA_API_FIELDS:
+            if desired_normalized.get(field.lower()) != deployed_normalized.get(field.lower()):
+                drift.append(f'persona.{field}')
+    starter_prompts = definition.get('starterPrompts')
+    if starter_prompts is not None and list(starter_prompts) != list(deployed.get('StarterPrompts') or ()):
+        drift.append('starterPrompts')
+    welcome_message = definition.get('welcomeMessage')
+    if welcome_message is not None and str(welcome_message) != str(deployed.get('WelcomeMessage') or ''):
+        drift.append('welcomeMessage')
+    desired_connectors = set((definition.get('dependsOn') or {}).get('actionConnectors') or ())
+    connectors_to_add, connectors_to_remove = compute_space_delta(
+        desired_connectors, deployed.get('ActionConnectors') or ())
+    if connectors_to_add or connectors_to_remove:
+        drift.append('actionConnectors')
+    return drift
 
 
 def compute_space_additions(current_arns, desired_arns) -> set:

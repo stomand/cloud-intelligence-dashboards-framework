@@ -348,7 +348,7 @@ cid-cmd create-cur-proxy --cur-version 1 --cur-table-name mycur2 \
 
 ### create-agent
 
-Create or update a Quick Agent (an AI advisor) and its knowledge Space over CID dashboards that are **already deployed**. An agent's knowledge layer is a **Space** — a Quick container that holds references to your already-deployed dashboards (and, optionally, datasets and pre-existing knowledge bases). This command never deploys dashboards and never provisions the data layer (CUR, Data Exports, Data Collection); when required dashboards are missing it points to the existing CID/CUDOS and Data Collection deployment guidance. Re-running is idempotent (update or no-op).
+Create a Quick Agent (an AI advisor) and its knowledge Space over CID dashboards that are **already deployed**. An agent's knowledge layer is a **Space** — a Quick container that holds references to your already-deployed dashboards (and, optionally, datasets and pre-existing knowledge bases). This command never deploys dashboards and never provisions the data layer (CUR, Data Exports, Data Collection); when required dashboards are missing it points to the existing CID/CUDOS and Data Collection deployment guidance. When the agent is already deployed, the command shows what differs from the catalog and asks whether to update instead — pass `--update yes` to skip the prompt, or use [update-agent](#update-agent).
 
 ```bash
 # Interactive — shows a category-grouped picker of catalog agents
@@ -363,7 +363,7 @@ cid-cmd create-agent --agent-id finops --space 'My Team Space' -y
 | `--agent-id TEXT` | Agent id from the catalog (a category-grouped picker is shown when omitted) |
 | `--space TEXT` | Name of a Space to use instead of the per-agent default Space (bring-your-own Space) |
 | `--cleanup-space` | Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies |
-| `--repair` | Detach and re-attach the agent Spaces to rewrite the links (recovers an agent whose Space shows as unavailable although it describes as healthy) |
+| `--update (yes\|no)` | When the agent is already deployed, update it without prompting ('no' exits with guidance) |
 
 #### Agent Prerequisites
 
@@ -379,7 +379,7 @@ This means:
 
 - If a dashboard an agent needs is missing, `create-agent` will not install it. It points you to the existing deployment guidance instead (see below).
 - Your CUR, Data Exports, and Data Collection setup is never touched, read-only checks aside.
-- Re-running `create-agent` is safe and idempotent: an unchanged agent is a no-op, a changed definition is updated in place, and Space resources are added additively and de-duplicated.
+- Re-running `create-agent` is safe: when the agent is already deployed, it shows what differs from the catalog and asks before updating anything; Space resources are added additively and de-duplicated.
 
 #### Required vs Optional dashboards
 
@@ -425,16 +425,6 @@ Removal is strictly scoped. A dashboard resource is removed from the Space only 
 
 Resources added to the Space by other tools or by hand are never removed. The same flag is available on `delete-agent` to tidy a retained shared Space after an agent is removed.
 
-#### Repairing Space links (`--repair`)
-
-An agent can show its Space as unavailable (and fail chat) even though it describes as healthy — the stored link is broken in a way no read API surfaces. The opt-in flag rewrites the links:
-
-```bash
-cid-cmd create-agent --agent-id finops --repair
-```
-
-The repair detaches every attached Space, waits for the agent to settle, then re-attaches the same Spaces. Two separate calls, because the API rejects the same ARN in both the add and remove lists of one call, and an add alone can leave the broken link in place. A freshly created agent needs no repair, so the flag only acts on an agent that already exists.
-
 #### The launch library
 
 Three agents ship with the core catalog (run `cid-cmd list-agents` to see them):
@@ -446,6 +436,36 @@ Three agents ship with the core catalog (run `cid-cmd list-agents` to see them):
 | `security` | CID Security Advisor | Security finding triage over Trusted Advisor data |
 
 Want to add your own agent? See the [zero-Python contribution guide](agents-contributing.md).
+
+### update-agent
+
+Update a deployed CID-managed Quick Agent to match the catalog — for example after a persona or starter-prompt change. The command shows which catalog-managed fields drifted (persona fields, starter prompts, welcome message, name, action connectors) and asks for confirmation before overriding them, since the update also overrides any customizations made in the Quick console to those fields. With `-y` or in unattended mode the update applies without a prompt. If nothing drifted, the agent is reported up to date and no agent-mutating call is made (missing Space resources are still added). The agent must exist — run [create-agent](#create-agent) first.
+
+```bash
+cid-cmd update-agent --agent-id finops
+```
+
+| Option | Description |
+|---|---|
+| `--agent-id TEXT` | Agent id from the catalog (a category-grouped picker is shown when omitted) |
+| `--space TEXT` | Name of a Space to use instead of the per-agent default Space (bring-your-own Space) |
+| `--cleanup-space` | Remove only CID-managed Space dashboard resources that are no longer referenced by any agent's dependencies |
+| `--sync-spaces` | Exactly synchronize the agent Space links with the catalog (removes Spaces the catalog does not carry) |
+| `--repair` | Detach and re-attach the agent Spaces to rewrite the links (recovers an agent whose Space shows as unavailable although it describes as healthy) |
+
+#### Additive Space links (`--sync-spaces`)
+
+By default the update reconciles the agent's Space links **additively**: missing catalog Spaces are attached, and Spaces you attached outside the catalog are never detached. Pass `--sync-spaces` to make the links match the catalog exactly, removing any Space the catalog does not carry.
+
+#### Repairing Space links (`--repair`)
+
+An agent can show its Space as unavailable (and fail chat) even though it describes as healthy — the stored link is broken in a way no read API surfaces. The opt-in flag rewrites the links:
+
+```bash
+cid-cmd update-agent --agent-id finops --repair
+```
+
+The repair detaches every attached Space, waits for the agent to settle, then re-attaches the same Spaces. Two separate calls, because the API rejects the same ARN in both the add and remove lists of one call, and an add alone can leave the broken link in place.
 
 ### list-agents
 

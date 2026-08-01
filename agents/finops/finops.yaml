@@ -1,10 +1,5 @@
-# FinOps agent (launch library).
-# Loaded via dashboards/catalog.yaml like any dashboard resource file;
+# FinOps agent (launch library). Loaded via dashboards/catalog.yaml;
 # personaFile is resolved relative to this file.
-# CUDOS/CID/KPI foundational dashboards are Required; the Trends dashboard is
-# Optional; the Trends anomaly-detection datasets are attached as cost-anomaly
-# knowledge (DATA_SET, never deployed). All keys exist in the core catalog
-# (referential completeness).
 agents:
   finops:
     category: Foundational
@@ -16,9 +11,9 @@ agents:
       cost anomalies across the organization.
     dependsOn:
       spaces: [cid-dashboards-space]
-      dashboards: [CUDOSv5, CID, KPI]            # Required: foundational cost & usage families
-      optionalDashboards: [Trends]               # Optional: trend/anomaly dashboard
-      datasets:                                  # cost-anomaly knowledge, attached as DATA_SET when present
+      dashboards: [CUDOSv5, CID, KPI]
+      optionalDashboards: [Trends]
+      datasets:
         - daily-anomaly-detection
         - monthly-anomaly-detection
       knowledgeBases: []

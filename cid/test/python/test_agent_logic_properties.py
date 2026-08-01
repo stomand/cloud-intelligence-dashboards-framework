@@ -27,7 +27,6 @@ from cid.helpers.quicksight.agent_logic import (
     derive_space_id,
     is_cid_managed,
     persona_differs,
-    substitute_tokens,
     validate_caps,
 )
 
@@ -49,44 +48,6 @@ _literals = st.text(
 _dep_keys = st.text(alphabet='abcdefghijklmnopqrstuvwxyz0123456789-', min_size=1, max_size=12)
 _arns = _dep_keys.map(lambda s: f'arn:aws:quicksight:us-east-1:123456789012:dashboard/{s}')
 _arn_sets = st.frozensets(_arns, max_size=10)
-
-
-# ---------------------------------------------------------------------------
-# Feature: cid-cmd-agent-flow-platform, Property 4: Template substitution resolves
-# known tokens and preserves unknown ones
-# Validates: Requirements 4.2
-# ---------------------------------------------------------------------------
-@st.composite
-def _template_cases(draw):
-    params = draw(st.dictionaries(_known_idents, st.text(max_size=15), max_size=5))
-    segment = st.one_of(
-        st.tuples(st.just('lit'), _literals),
-        st.tuples(st.just('unknown'), _unknown_idents),
-        *([st.tuples(st.just('known'), st.sampled_from(sorted(params)))] if params else []),
-    )
-    segments = draw(st.lists(segment, max_size=10))
-    template_parts = []
-    expected_parts = []
-    for kind, value in segments:
-        if kind == 'lit':
-            template_parts.append(value)
-            expected_parts.append(value)
-        elif kind == 'known':
-            template_parts.append('${%s}' % value)
-            expected_parts.append(str(params[value]))
-        else:  # unknown token stays textually intact
-            template_parts.append('${%s}' % value)
-            expected_parts.append('${%s}' % value)
-    return ''.join(template_parts), params, ''.join(expected_parts)
-
-
-# Feature: cid-cmd-agent-flow-platform, Property 4: Template substitution resolves known tokens and preserves unknown ones
-@settings(max_examples=100, deadline=None)
-@given(case=_template_cases())
-def test_property_4_token_substitution(case):
-    """**Validates: Requirements 4.2**"""
-    text, params, expected = case
-    assert substitute_tokens(text, params) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -618,3 +579,64 @@ def test_property_29_database_selection_deterministic_majority(candidates):
         # ... and among all maximal-count names it is the lexicographically smallest
         winners = sorted(name for name, count in counts.items() if count == max_count)
         assert first == winners[0]
+
+
+# ======================================================================
+# describe_drift
+# ======================================================================
+
+from cid.helpers.quicksight.agent_logic import describe_drift
+
+
+def _deployed_matching(definition):
+    """DescribeAgent read shape exactly matching a catalog definition."""
+    persona = {key[0].upper() + key[1:]: str(value)
+               for key, value in (definition.get('persona') or {}).items()}
+    return {
+        'Name': definition.get('name'),
+        'CustomPromptInterface': persona,
+        'StarterPrompts': list(definition.get('starterPrompts') or []),
+        'WelcomeMessage': definition.get('welcomeMessage'),
+        'ActionConnectors': list((definition.get('dependsOn') or {}).get('actionConnectors') or []),
+    }
+
+
+def _drift_definition():
+    return {
+        'name': 'Agent',
+        'persona': {'identity': 'id-1', 'customInstructions': 'ci-1', 'tone': 't-1',
+                    'outputStyle': 'os-1', 'responseLength': 'rl-1'},
+        'starterPrompts': ['p1'],
+        'welcomeMessage': 'hello',
+        'dependsOn': {'actionConnectors': []},
+    }
+
+
+def test_describe_drift_empty_when_matching():
+    definition = _drift_definition()
+    assert describe_drift(definition, _deployed_matching(definition)) == []
+
+
+def test_describe_drift_names_the_drifted_persona_field():
+    definition = _drift_definition()
+    deployed = _deployed_matching(definition)
+    deployed['CustomPromptInterface']['Tone'] = 'different'
+    assert describe_drift(definition, deployed) == ['persona.Tone']
+
+
+def test_describe_drift_reports_each_managed_field():
+    definition = _drift_definition()
+    deployed = _deployed_matching(definition)
+    deployed['Name'] = 'Other'
+    deployed['StarterPrompts'] = ['p2']
+    deployed['WelcomeMessage'] = 'bye'
+    deployed['ActionConnectors'] = ['arn:connector']
+    assert describe_drift(definition, deployed) == ['name', 'starterPrompts', 'welcomeMessage', 'actionConnectors']
+
+
+def test_describe_drift_ignores_unmanaged_fields():
+    """Fields the definition does not carry (None) never count as drift."""
+    definition = {'name': None, 'persona': {}, 'starterPrompts': None, 'welcomeMessage': None}
+    deployed = {'Name': 'Anything', 'StarterPrompts': ['x'], 'WelcomeMessage': 'y',
+                'CustomPromptInterface': {'Tone': 'z'}}
+    assert describe_drift(definition, deployed) == []

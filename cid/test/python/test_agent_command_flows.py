@@ -231,6 +231,26 @@ def run_create_raising(cid_obj, exception_type, **kwargs):
     return excinfo, buffer.getvalue()
 
 
+update_agent = Cid.update_agent.__wrapped__
+
+
+def run_update(cid_obj, **kwargs):
+    """Run the undecorated update-agent handler capturing stdout; returns (result, output)."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        result = update_agent(cid_obj, **kwargs)
+    return result, buffer.getvalue()
+
+
+def run_update_raising(cid_obj, exception_type, **kwargs):
+    """Run the update-agent handler expecting an exception; returns (excinfo, output)."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        with pytest.raises(exception_type) as excinfo:
+            update_agent(cid_obj, **kwargs)
+    return excinfo, buffer.getvalue()
+
+
 def dashboard_update_calls(cid_obj):
     """The space.update_resources calls with resource_type='DASHBOARD'."""
     return [call for call in cid_obj.space.update_resources.call_args_list
@@ -321,6 +341,7 @@ class TestCleanupOnFailure:
         cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',),
                            existing_agent=existing)
         cid_obj.agent.create_or_update.side_effect = RuntimeError('boom')
+        reset_parameters({'update': 'yes'})
         run_create_raising(cid_obj, RuntimeError, agent_id=AGENT_ID)
         assert not cid_obj.agent.delete.called
 
@@ -486,6 +507,7 @@ class TestConflictGuard:
         existing = {'Arn': AGENT_ARN, 'Description': f'agent {CID_MANAGED_MARKER}'}
         cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',),
                            existing_agent=existing)
+        reset_parameters({'update': 'yes'})
         result, output = run_create(cid_obj, agent_id=AGENT_ID)
         assert result == AGENT_ID
         cid_obj.agent.create_or_update.assert_called_once()
@@ -711,6 +733,7 @@ def test_property_20_non_cid_agent_collisions_refused_not_mutated(has_tag, has_m
     cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',),
                        existing_agent=existing, resource_tags=tags)
     if has_tag or has_marker:  # CID-managed: idempotent update/no-op path proceeds
+        reset_parameters({'update': 'yes'})
         result, _ = run_create(cid_obj, agent_id=AGENT_ID)
         assert result == AGENT_ID
         cid_obj.agent.create_or_update.assert_called_once()
@@ -1298,9 +1321,8 @@ class TestUnknownStatusFallback:
 
 
 class TestRepairFlag:
-    """--repair rewrites the Space links of a PRE-EXISTING agent (detach +
-    re-attach through Agent.repair_space_associations) and never fires on a fresh
-    create — a freshly created agent needs no repair."""
+    """--repair (update-agent) rewrites the Space links of the deployed agent
+    through Agent.repair_space_associations; create-agent never repairs."""
 
     @staticmethod
     def existing_cid_agent():
@@ -1311,19 +1333,19 @@ class TestRepairFlag:
             'Spaces': [SPACE_ARN],
         }
 
-    def test_repair_flag_repairs_a_pre_existing_agent(self):
+    def test_repair_flag_repairs_the_deployed_agent(self):
         definition = make_definition(required=('dash',))
         cid_obj = make_create_cid(definition, present=('dash',), existing_agent=self.existing_cid_agent())
-        reset_parameters({'repair': True})
+        reset_parameters({'repair': True, 'confirm-update': 'yes'})
 
-        run_create(cid_obj, agent_id=AGENT_ID)
+        run_update(cid_obj, agent_id=AGENT_ID)
 
         cid_obj.agent.repair_space_associations.assert_called_once_with(AGENT_ID)
 
-    def test_repair_flag_is_skipped_on_a_fresh_create(self):
+    def test_create_agent_never_repairs(self):
         definition = make_definition(required=('dash',))
-        cid_obj = make_create_cid(definition, present=('dash',))
-        reset_parameters({'repair': True})
+        cid_obj = make_create_cid(definition, present=('dash',), existing_agent=self.existing_cid_agent())
+        reset_parameters({'repair': True, 'update': 'yes'})
 
         run_create(cid_obj, agent_id=AGENT_ID)
 
@@ -1332,7 +1354,123 @@ class TestRepairFlag:
     def test_no_repair_without_the_flag(self):
         definition = make_definition(required=('dash',))
         cid_obj = make_create_cid(definition, present=('dash',), existing_agent=self.existing_cid_agent())
+        reset_parameters({'confirm-update': 'yes'})
 
-        run_create(cid_obj, agent_id=AGENT_ID)
+        run_update(cid_obj, agent_id=AGENT_ID)
 
         cid_obj.agent.repair_space_associations.assert_not_called()
+
+
+# ======================================================================
+# create-agent existing-agent gate + update-agent command
+# ======================================================================
+
+
+class TestCreateAgentGate:
+    """create-agent on an already-deployed agent asks before updating; without
+    consent it exits with guidance and makes no mutating call."""
+
+    def test_declined_update_exits_with_guidance(self):
+        definition = make_definition(required=('dash',))
+        cid_obj = make_create_cid(definition, present=('dash',),
+                                  existing_agent=TestRepairFlag.existing_cid_agent())
+        reset_parameters({'update': 'no'})
+
+        result, output = run_create(cid_obj, agent_id=AGENT_ID)
+
+        assert result == AGENT_ID
+        assert 'update-agent' in output
+        for method in AGENT_MUTATING_METHODS:
+            assert not getattr(cid_obj.agent, method).called
+        assert not cid_obj.space.create_or_update.called
+        assert not cid_obj.space.update_resources.called
+
+    def test_update_yes_proceeds_into_the_update_path(self):
+        definition = make_definition(required=('dash',))
+        cid_obj = make_create_cid(definition, present=('dash',),
+                                  existing_agent=TestRepairFlag.existing_cid_agent())
+        reset_parameters({'update': 'yes'})
+
+        result, _ = run_create(cid_obj, agent_id=AGENT_ID)
+
+        assert result == AGENT_ID
+        cid_obj.agent.create_or_update.assert_called_once()
+
+    def test_unattended_without_update_parameter_raises_with_guidance(self):
+        definition = make_definition(required=('dash',))
+        cid_obj = make_create_cid(definition, present=('dash',),
+                                  existing_agent=TestRepairFlag.existing_cid_agent())
+
+        with patch('cid.common.isatty', return_value=False):
+            excinfo, _ = run_create_raising(cid_obj, CidError, agent_id=AGENT_ID)
+
+        assert '--update yes' in str(excinfo.value)
+
+    def test_fresh_create_is_unaffected_by_the_gate(self):
+        definition = make_definition(required=('dash',))
+        cid_obj = make_create_cid(definition, present=('dash',))
+
+        result, output = run_create(cid_obj, agent_id=AGENT_ID)
+
+        assert result == AGENT_ID
+        cid_obj.agent.create_or_update.assert_called_once()
+        assert 'created' in output
+
+
+class TestUpdateAgentCommand:
+    """update-agent requires a deployed agent, shows drift, and passes
+    sync-spaces through to the helper."""
+
+    def test_missing_agent_raises_with_create_guidance(self):
+        definition = make_definition(required=('dash',))
+        cid_obj = make_create_cid(definition, present=('dash',))
+
+        excinfo, _ = run_update_raising(cid_obj, CidError, agent_id=AGENT_ID)
+
+        assert 'create-agent' in str(excinfo.value)
+        for method in AGENT_MUTATING_METHODS:
+            assert not getattr(cid_obj.agent, method).called
+
+    def test_drift_is_shown_and_update_applies_on_consent(self):
+        definition = make_definition(required=('dash',))
+        deployed = dict(TestRepairFlag.existing_cid_agent(), WelcomeMessage='old welcome')
+        cid_obj = make_create_cid(definition, present=('dash',), existing_agent=deployed)
+        reset_parameters({'confirm-update': 'yes'})
+
+        result, output = run_update(cid_obj, agent_id=AGENT_ID)
+
+        assert result == AGENT_ID
+        assert 'welcomeMessage' in output
+        cid_obj.agent.create_or_update.assert_called_once()
+
+    def test_declined_drift_confirm_makes_no_mutating_call(self):
+        definition = make_definition(required=('dash',))
+        deployed = dict(TestRepairFlag.existing_cid_agent(), WelcomeMessage='old welcome')
+        cid_obj = make_create_cid(definition, present=('dash',), existing_agent=deployed)
+        reset_parameters({'confirm-update': 'no'})
+
+        result, output = run_update(cid_obj, agent_id=AGENT_ID)
+
+        assert result == AGENT_ID
+        assert 'No changes made' in output
+        cid_obj.agent.create_or_update.assert_not_called()
+
+    def test_sync_spaces_parameter_reaches_the_helper(self):
+        definition = make_definition(required=('dash',))
+        cid_obj = make_create_cid(definition, present=('dash',),
+                                  existing_agent=TestRepairFlag.existing_cid_agent())
+        reset_parameters({'confirm-update': 'yes', 'sync-spaces': True})
+
+        run_update(cid_obj, agent_id=AGENT_ID)
+
+        assert cid_obj.agent.create_or_update.call_args.kwargs.get('sync_spaces') is True
+
+    def test_default_is_additive_spaces(self):
+        definition = make_definition(required=('dash',))
+        cid_obj = make_create_cid(definition, present=('dash',),
+                                  existing_agent=TestRepairFlag.existing_cid_agent())
+        reset_parameters({'confirm-update': 'yes'})
+
+        run_update(cid_obj, agent_id=AGENT_ID)
+
+        assert cid_obj.agent.create_or_update.call_args.kwargs.get('sync_spaces') is False

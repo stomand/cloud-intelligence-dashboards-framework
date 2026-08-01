@@ -376,7 +376,7 @@ class Agent(CidBase):
             if field.lower() in lowered
         }
 
-    def create_or_update(self, definition: dict, space_arns) -> dict:
+    def create_or_update(self, definition: dict, space_arns, sync_spaces: bool = False) -> dict:
         """ Idempotent Agent create-or-update: create, drift-diffed update, or no-op.
 
         Create path (the agent does not exist per :meth:`get`): one ``CreateAgent`` call
@@ -442,6 +442,7 @@ class Agent(CidBase):
             lifecycle=lifecycle,
             desired_spaces=desired_spaces,
             desired_connectors=desired_connectors,
+            sync_spaces=sync_spaces,
         )
 
     def _create(self, agent_id, name, description, new_prompt, starter_prompts,
@@ -604,8 +605,14 @@ class Agent(CidBase):
         return True
 
     def _update(self, agent, agent_id, name, desired_persona, starter_prompts,
-                welcome_message, lifecycle, desired_spaces, desired_connectors) -> dict:
-        """ Drift-diffed UpdateAgent, or no-op when nothing changed. """
+                welcome_message, lifecycle, desired_spaces, desired_connectors,
+                sync_spaces=False) -> dict:
+        """ Drift-diffed UpdateAgent, or no-op when nothing changed.
+
+        Space associations are ADDITIVE by default: Spaces the user attached
+        outside the catalog are never detached. ``sync_spaces=True`` opts into
+        exact synchronization (removes Spaces the definition does not carry).
+        """
         arn = agent.get('Arn')
         # Read shapes: persona reads back as CustomPromptInterface (write/read asymmetry);
         # Spaces/ActionConnectors read back as ARN-string lists; the read shape names the
@@ -616,6 +623,9 @@ class Agent(CidBase):
         deployed_name = agent.get('Name') or agent.get('AgentName')
 
         spaces_to_add, spaces_to_remove = compute_space_delta(desired_spaces, current_spaces)
+        if not sync_spaces:
+            # additive default: never detach Spaces the user attached themselves
+            spaces_to_remove = set()
         connectors_to_add, connectors_to_remove = compute_space_delta(desired_connectors, current_connectors)
 
         # Fields the definition does not carry (None) are not managed and never count as drift.

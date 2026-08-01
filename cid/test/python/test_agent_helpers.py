@@ -1199,7 +1199,7 @@ class TestAssociationFailureChecks:
         }
 
         with pytest.raises(CidError, match='association failures') as excinfo:
-            helper.create_or_update(definition, SPACE_ARNS)
+            helper.create_or_update(definition, SPACE_ARNS, sync_spaces=True)
 
         assert stale_arn in str(excinfo.value)
 
@@ -1301,3 +1301,37 @@ class TestRepairSpaceAssociations:
             assert helper.repair_space_associations(definition['agentId']) is True
 
         assert client.update_agent.call_count == 3
+
+
+class TestAdditiveSpaceLinks:
+    """Space associations are ADDITIVE by default on update: Spaces the user
+    attached outside the catalog are never detached. sync_spaces=True opts into
+    exact synchronization."""
+
+    @staticmethod
+    def deployed_with_extra_space(definition):
+        extra = f'arn:aws:quicksight:us-east-1:{ACCOUNT_ID}:space/user-added-space'
+        return deployed_agent_matching(definition, SPACE_ARNS + [extra]), extra
+
+    def test_default_never_detaches_a_user_added_space(self):
+        helper, client = make_agent_helper()
+        definition = base_definition()
+        deployed, _ = self.deployed_with_extra_space(definition)
+        client.describe_agent.return_value = {'Agent': deployed}
+
+        result = helper.create_or_update(definition, SPACE_ARNS)
+
+        assert result['action'] == 'unchanged'
+        client.update_agent.assert_not_called()
+
+    def test_sync_spaces_detaches_spaces_the_catalog_does_not_carry(self):
+        helper, client = make_agent_helper()
+        definition = base_definition()
+        deployed, extra = self.deployed_with_extra_space(definition)
+        client.describe_agent.return_value = {'Agent': deployed}
+        client.update_agent.return_value = {}
+
+        result = helper.create_or_update(definition, SPACE_ARNS, sync_spaces=True)
+
+        assert result['action'] == 'updated'
+        assert client.update_agent.call_args.kwargs['SpacesToRemove'] == [extra]

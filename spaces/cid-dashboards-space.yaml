@@ -1,8 +1,4 @@
-# Shared Space for the launch-library agents (operations, finops, security).
-# Loaded via dashboards/catalog.yaml like any dashboard resource file.
-# Dashboard keys are split into
-# Required (dependsOn.dashboards) and Optional (dependsOn.optionalDashboards);
-# every key exists in the core catalog (referential completeness).
+# Shared Space for the launch-library agents. Loaded via dashboards/catalog.yaml.
 spaces:
   cid-dashboards-space:
     name: CID Dashboards Space
@@ -10,6 +6,6 @@ spaces:
       Comprehensive knowledge base for the Cloud Intelligence Dashboards,
       shared by the CID launch-library agents.
     dependsOn:
-      dashboards: [CUDOSv5, CID, KPI]            # Required: foundational dashboards
-      optionalDashboards: [Trends]               # Optional: additional trend/anomaly dashboard
-      datasets: []                               # dataset knowledge is declared per agent
+      dashboards: [CUDOSv5, CID, KPI]
+      optionalDashboards: [Trends]
+      datasets: []
