@@ -314,7 +314,20 @@ class Cid():
 
     def track(self, action, dashboard_id):
         """ Send dashboard_id and account_id to CID adoption tracker """
+        self._track(action, {'dashboard_id': dashboard_id})
+
+    def track_agent(self, action, agent_id):
+        """ Send agent_id and account_id to CID adoption tracker """
+        self._track(action, {'agent_id': agent_id})
+
+    def _track(self, action, resource: dict):
+        """ Send a resource id and account_id to the CID adoption tracker.
+
+        The HTTP verb encodes the action (created PUT / updated PATCH /
+        deleted DELETE). Strictly fail-open: never fails the deployment.
+        """
         method = {'created':'PUT', 'updated':'PATCH', 'deleted': 'DELETE'}.get(action, None)
+        resource_id = next(iter(resource.values()), None)
         if not method:
             logger.debug(f"This will not fail the deployment. Logging action {action} is not supported. This issue will be ignored")
             return
@@ -326,7 +339,7 @@ class Cid():
         else:
             deployment_type = 'CID'
         payload = {
-            'dashboard_id': dashboard_id,
+            **resource,
             'account_id': self.base.account_id,
             action + '_via': deployment_type,
         }
@@ -338,9 +351,9 @@ class Cid():
                 headers={'Content-Type': 'application/json'}
             )
             if res.status_code != 200:
-                logger.debug(f"This will not fail the deployment. There has been an issue logging action {action}  for dashboard {dashboard_id} and account {self.base.account_id}, server did not respond with a 200 response,actual  status: {res.status_code}, response data {res.text}. This issue will be ignored")
+                logger.debug(f"This will not fail the deployment. There has been an issue logging action {action}  for resource {resource_id} and account {self.base.account_id}, server did not respond with a 200 response,actual  status: {res.status_code}, response data {res.text}. This issue will be ignored")
         except Exception as e:
-            logger.debug(f"Issue logging action {action}  for dashboard {dashboard_id} , due to a urllib3 exception {str(e)} . This issue will be ignored")
+            logger.debug(f"Issue logging action {action}  for resource {resource_id} , due to a urllib3 exception {str(e)} . This issue will be ignored")
 
     def get_page(self, source):
         resp = requests.get(source, timeout=10, headers={'User-Agent': 'cid'})
@@ -969,6 +982,9 @@ class Cid():
                 'missing permission and re-run.'
             ) from exc
 
+        # adoption tracking: only real mutations, never no-ops; fail-open
+        if result.get('action') in ('created', 'updated'):
+            self.track_agent(result['action'], target_agent_id)
         # 14. persist parameters keyed by the agent id + print the console URL
         self._dump_agent_default_parameters(agent_key)
         console_url = build_console_url(
@@ -1770,6 +1786,7 @@ class Cid():
         # the Agent helper retries through ConflictException while the agent settles
         # and only calls DeleteAgent — no dashboard is ever deleted
         self.agent.delete(target_agent_id)
+        self.track_agent('deleted', target_agent_id)
         cid_print(f'Agent <BOLD>{target_agent_id}<END> deleted. No dashboard was deleted.')
 
         space_ids = self._agent_space_ids(definition, agent_space_arns)

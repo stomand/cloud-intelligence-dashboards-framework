@@ -6,6 +6,7 @@ with mocked qs/space/agent helpers.
 
 import io
 import re
+import json
 import contextlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -213,6 +214,7 @@ def make_create_cid(definition, present=(), present_datasets=(), user_role='AUTH
     # deploy-engine / data-layer sentinels: any call on these is out of scope
     for sentinel in ('athena', 'glue', 'organizations', 's3', 'cur1', 'cur2', 'iam', 'cfn'):
         cid_obj.__dict__[sentinel] = MagicMock(name=sentinel)
+    cid_obj.track_agent = MagicMock(name='track_agent')  # no live HTTP from unit tests
     return cid_obj
 
 
@@ -943,6 +945,7 @@ def make_delete_cid(agents_catalog, deployed_agents, spaces=None):
     agent.client.exceptions = excs
     agent.get.side_effect = lambda an_id: deployed_agents.get(an_id)
     cid_obj.__dict__['agent'] = agent
+    cid_obj.track_agent = MagicMock(name='track_agent')  # no live HTTP from unit tests
     return cid_obj
 
 
@@ -1675,6 +1678,55 @@ class TestDependencySummaryWrapping:
         plain = Cid._dependency_summary_lines(['a', 'b'], [], {'a'}, color=False, width=30)
         colored = Cid._dependency_summary_lines(['a', 'b'], [], {'a'}, color=True, width=30)
         assert len(plain) == len(colored)   # same wrapping decisions
+
+
+class TestAdoptionTracking:
+    """Agent lifecycle events go to the CID adoption tracker with a unique
+    verb (PUT/PATCH/DELETE), the account id, and an agent_id — mirroring the
+    dashboard tracking, fail-open."""
+
+    def test_track_agent_sends_agent_id_account_and_verb(self):
+        cid_obj = Cid.__new__(Cid)
+        cid_obj.base = SimpleNamespace(account_id=ACCOUNT_ID)
+        with patch('cid.common.requests.request') as request:
+            request.return_value = SimpleNamespace(status_code=200, text='')
+            cid_obj.track_agent('created', 'cid-finops-advisor')
+        assert request.call_args.kwargs['method'] == 'PUT'
+        payload = json.loads(request.call_args.kwargs['data'])
+        assert payload['agent_id'] == 'cid-finops-advisor'
+        assert payload['account_id'] == ACCOUNT_ID
+        assert payload['created_via'] == 'CID'
+        assert 'dashboard_id' not in payload
+
+    def test_track_agent_failure_is_swallowed(self):
+        cid_obj = Cid.__new__(Cid)
+        cid_obj.base = SimpleNamespace(account_id=ACCOUNT_ID)
+        with patch('cid.common.requests.request', side_effect=RuntimeError('offline')):
+            cid_obj.track_agent('deleted', 'cid-finops-advisor')   # must not raise
+
+    def test_create_flow_tracks_created(self):
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        run_create(cid_obj, agent_id=AGENT_ID)
+        cid_obj.track_agent.assert_called_once_with('created', AGENT_ID)
+
+    def test_unchanged_run_does_not_track(self):
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj.agent.create_or_update.return_value = {
+            'agentId': AGENT_ID, 'arn': AGENT_ARN, 'action': 'unchanged'}
+        run_create(cid_obj, agent_id=AGENT_ID)
+        assert not cid_obj.track_agent.called
+
+    def test_dashboard_track_payload_is_unchanged(self):
+        """The dashboard tracker still sends dashboard_id — no regression."""
+        cid_obj = Cid.__new__(Cid)
+        cid_obj.base = SimpleNamespace(account_id=ACCOUNT_ID)
+        with patch('cid.common.requests.request') as request:
+            request.return_value = SimpleNamespace(status_code=200, text='')
+            cid_obj.track('updated', 'cudos-v5')
+        assert request.call_args.kwargs['method'] == 'PATCH'
+        payload = json.loads(request.call_args.kwargs['data'])
+        assert payload['dashboard_id'] == 'cudos-v5'
+        assert 'agent_id' not in payload
 
 
 class TestDeployedAgentIdsEnumeration:
