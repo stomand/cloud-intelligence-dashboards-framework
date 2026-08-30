@@ -314,20 +314,19 @@ class Cid():
 
     def track(self, action, dashboard_id):
         """ Send dashboard_id and account_id to CID adoption tracker """
-        self._track(action, {'dashboard_id': dashboard_id})
+        self._track(action, 'dashboard_id', dashboard_id)
 
     def track_agent(self, action, agent_id):
         """ Send agent_id and account_id to CID adoption tracker """
-        self._track(action, {'agent_id': agent_id})
+        self._track(action, 'agent_id', agent_id)
 
-    def _track(self, action, resource: dict):
+    def _track(self, action, resource_key, resource_id):
         """ Send a resource id and account_id to the CID adoption tracker.
 
         The HTTP verb encodes the action (created PUT / updated PATCH /
         deleted DELETE). Strictly fail-open: never fails the deployment.
         """
         method = {'created':'PUT', 'updated':'PATCH', 'deleted': 'DELETE'}.get(action, None)
-        resource_id = next(iter(resource.values()), None)
         if not method:
             logger.debug(f"This will not fail the deployment. Logging action {action} is not supported. This issue will be ignored")
             return
@@ -339,7 +338,7 @@ class Cid():
         else:
             deployment_type = 'CID'
         payload = {
-            **resource,
+            resource_key: resource_id,
             'account_id': self.base.account_id,
             action + '_via': deployment_type,
         }
