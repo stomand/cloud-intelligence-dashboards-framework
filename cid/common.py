@@ -1405,7 +1405,9 @@ class Cid():
         Zero present dashboards raise the guidance CidError; otherwise
         the run proceeds with the present set and warns per missing dependency.
         Dataset dependencies are resolved read-only and only
-        present dataset ARNs are attached later.
+        present dataset ARNs are attached later. Datasets of PRESENT dependency
+        dashboards are derived from the dashboard catalog and attached as
+        directly queryable knowledge, without manifest declaration.
         """
         required, optional, dataset_keys, knowledge_base_arns = self._collect_agent_dependency_keys(definition)
         deployed_arns_by_id = self._deployed_dashboard_arns_by_id()
@@ -1451,10 +1453,8 @@ class Cid():
                 f'<YELLOW>Warning:<END> {label} <BOLD>{", ".join(missing_datasets)}<END> not found — '
                 'skipped as knowledge. This command does not create datasets.'
             )
-        # datasets behind the PRESENT dependency dashboards: attached as directly
-        # queryable knowledge beyond what the dashboard visuals expose. Derived from
-        # each dashboard's own catalog dependsOn, so they exist whenever the
-        # dashboard was deployed by cid-cmd; missing ones are skipped quietly.
+        # datasets behind PRESENT dashboards exist whenever cid-cmd deployed the
+        # dashboard, so a missing one is a quiet skip, not a user-facing warning
         dashboards_catalog = self.resources.get('dashboards') or {}
         seen_derived = set(dataset_keys)   # explicitly declared keys are already resolved above
         for dashboard_key in classification['present']:
