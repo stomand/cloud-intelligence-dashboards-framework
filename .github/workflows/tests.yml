@@ -32,9 +32,7 @@ jobs:
           pip install ./ pytest hypothesis
       - name: Run unit tests
         run: |
-          # test_csv2view.py still requires live AWS credentials on this branch;
-          # the ignore goes away with the next merge from upstream main
-          pytest cid/test/python/ -v --ignore=cid/test/python/test_csv2view.py
+          pytest cid/test/python/ -v
 
   test-cli:
     needs: unit-tests
