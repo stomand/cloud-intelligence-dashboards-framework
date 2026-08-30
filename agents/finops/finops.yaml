@@ -1,4 +1,4 @@
-# FinOps agent (launch library). Loaded via dashboards/catalog.yaml;
+# FinOps agent (launch library). Loaded via agents/catalog.yaml;
 # personaFile is resolved relative to this file.
 agents:
   finops:

@@ -1,4 +1,4 @@
-# Operations agent (launch library). Loaded via dashboards/catalog.yaml;
+# Operations agent (launch library). Loaded via agents/catalog.yaml;
 # personaFile is resolved relative to this file.
 agents:
   operations:

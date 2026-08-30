@@ -28,25 +28,26 @@ def _make_catalog_cid():
 
 
 def _write_repo_layout(root, agents=None, spaces=None):
-    """Create <root>/dashboards/catalog.yaml + agents/<id>/<id>.yaml + spaces/<id>.yaml.
+    """Create <root>/agents/catalog.yaml + agents/<id>/<id>.yaml + spaces/<id>.yaml.
 
-    Mirrors the real repo convention: catalog urls are relative to the catalog
-    file, agent manifests are kind-wrapped and live in per-agent folders.
+    Mirrors the real repo convention: agents have their own catalog next to
+    the agent folders, catalog urls are relative to the catalog file, and
+    agent manifests are kind-wrapped in per-agent folders.
     """
     root = Path(root)
-    (root / 'dashboards').mkdir(parents=True, exist_ok=True)
+    (root / 'agents').mkdir(parents=True, exist_ok=True)
     urls = []
     for agent_id, entry in (agents or {}).items():
         agent_dir = root / 'agents' / agent_id
         agent_dir.mkdir(parents=True)
         (agent_dir / f'{agent_id}.yaml').write_text(yaml.safe_dump({'agents': {agent_id: entry}}))
-        urls.append(f'../agents/{agent_id}/{agent_id}.yaml')
+        urls.append(f'{agent_id}/{agent_id}.yaml')
     for space_id, entry in (spaces or {}).items():
         spaces_dir = root / 'spaces'
         spaces_dir.mkdir(parents=True, exist_ok=True)
         (spaces_dir / f'{space_id}.yaml').write_text(yaml.safe_dump({'spaces': {space_id: entry}}))
         urls.append(f'../spaces/{space_id}.yaml')
-    catalog = root / 'dashboards' / 'catalog.yaml'
+    catalog = root / 'agents' / 'catalog.yaml'
     catalog.write_text(yaml.safe_dump({'Resources': [{'Url': url} for url in urls]}))
     return catalog
 
@@ -104,7 +105,7 @@ def test_malformed_resource_file_is_skipped_and_loading_continues():
         bad.mkdir(parents=True)
         (bad / 'bad.yaml').write_text('agents: [unclosed\n  sequence: {')
         catalog_content = yaml.safe_load(catalog.read_text())
-        catalog_content['Resources'].insert(0, {'Url': '../agents/bad/bad.yaml'})
+        catalog_content['Resources'].insert(0, {'Url': 'bad/bad.yaml'})
         catalog.write_text(yaml.safe_dump(catalog_content))
 
         cid_obj = _make_catalog_cid()
@@ -133,18 +134,34 @@ def test_missing_persona_file_raises_naming_the_file():
         assert 'missing.yaml' in str(excinfo.value)
 
 
-def test_repo_catalog_lists_launch_agents_and_shared_space():
-    """dashboards/catalog.yaml references the repo-root agent and space files."""
-    catalog = yaml.safe_load((REPO_ROOT / 'dashboards' / 'catalog.yaml').read_text())
+def test_repo_agents_catalog_lists_launch_agents_and_shared_space():
+    """agents/catalog.yaml references the agent and shared space files, and
+    every listed url resolves to a file."""
+    catalog = yaml.safe_load((REPO_ROOT / 'agents' / 'catalog.yaml').read_text())
     urls = [resource.get('Url') for resource in catalog.get('Resources', [])]
-    for expected in ('../agents/finops/finops.yaml',
-                     '../agents/operations/operations.yaml',
-                     '../agents/security/security.yaml',
+    for expected in ('finops/finops.yaml',
+                     'operations/operations.yaml',
+                     'security/security.yaml',
                      '../spaces/cid-dashboards-space.yaml'):
-        assert expected in urls, f'{expected} is not listed in dashboards/catalog.yaml'
+        assert expected in urls, f'{expected} is not listed in agents/catalog.yaml'
     for url in urls:
-        referenced = (REPO_ROOT / 'dashboards' / url).resolve()
+        referenced = (REPO_ROOT / 'agents' / url).resolve()
         assert referenced.is_file(), f'catalog url {url} does not resolve to a file'
+
+
+def test_dashboards_catalog_carries_no_agent_entries():
+    """dashboards/catalog.yaml stays dashboards-only; agents have their own catalog."""
+    catalog = yaml.safe_load((REPO_ROOT / 'dashboards' / 'catalog.yaml').read_text())
+    urls = [resource.get('Url') or '' for resource in catalog.get('Resources', [])]
+    assert not [url for url in urls if 'agents/' in url or 'spaces/' in url]
+
+
+def test_default_catalog_urls_include_the_agents_catalog():
+    """The Cid default catalog list carries both the dashboards and the agents
+    catalogs, so agents load without extra flags once merged upstream."""
+    cid_obj = Cid()
+    assert any(url.endswith('dashboards/catalog.yaml') for url in cid_obj.catalog_urls)
+    assert any(url.endswith('agents/catalog.yaml') for url in cid_obj.catalog_urls)
 
 
 # ======================================================================
@@ -152,7 +169,8 @@ def test_repo_catalog_lists_launch_agents_and_shared_space():
 # ======================================================================
 
 
-CATALOG_PATH = REPO_ROOT / 'dashboards' / 'catalog.yaml'
+DASHBOARDS_CATALOG_PATH = REPO_ROOT / 'dashboards' / 'catalog.yaml'
+AGENTS_CATALOG_PATH = REPO_ROOT / 'agents' / 'catalog.yaml'
 
 
 LAUNCH_AGENT_IDS = ('operations', 'finops', 'security')
@@ -162,11 +180,13 @@ PERSONA_FIELDS = ('identity', 'customInstructions', 'tone', 'outputStyle', 'resp
 
 
 def _load_runtime_resources():
-    """Builtin plugin resources merged with the local repo catalog (once)."""
+    """Builtin plugin resources merged with both local repo catalogs (once),
+    mirroring the runtime default catalog list."""
     resources = Plugin('cid.builtin.core').provides()
     cid_obj = Cid.__new__(Cid)
     cid_obj.resources = resources
-    cid_obj.load_catalog(str(CATALOG_PATH))
+    cid_obj.load_catalog(str(DASHBOARDS_CATALOG_PATH))
+    cid_obj.load_catalog(str(AGENTS_CATALOG_PATH))
     return cid_obj.resources
 
 

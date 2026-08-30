@@ -1,10 +1,10 @@
 # Contributing a Quick Agent — Zero-Python Guide
 
 Adding a new agent to the `cid-cmd` catalog is a **content-only** contribution:
-**no Python change is required**. Agents are catalog content, defined and shipped exactly
-the way dashboards are: a YAML resource file at the repo root, listed in
-`dashboards/catalog.yaml`. If your pull request touches any `.py` file, it is not an
-agent contribution and will be reviewed under the regular code process instead.
+**no Python change is required**. Agents are catalog content, defined and shipped the
+same way dashboards are: a YAML resource file at the repo root, listed in the agents'
+own catalog, `agents/catalog.yaml`. If your pull request touches any `.py` file, it is
+not an agent contribution and will be reviewed under the regular code process instead.
 
 ## The agent folder
 
@@ -16,10 +16,10 @@ agents/<name>/
 └── persona.yaml        # required — the 5-field persona
 ```
 
-Then add one line to `dashboards/catalog.yaml`:
+Then add one line to `agents/catalog.yaml`:
 
 ```yaml
-  - Url: ../agents/<name>/<name>.yaml
+  - Url: <name>/<name>.yaml
 ```
 
 That is all the wiring there is — the file flows through the same resource pipeline
@@ -99,7 +99,8 @@ consult for what, response structure, and guardrails).
 ### Spaces: shared vs agent-owned
 
 - **Shared Space** — used by several agents; one kind-wrapped file per Space under
-  `spaces/<space-id>.yaml`, listed in `dashboards/catalog.yaml`:
+  `spaces/<space-id>.yaml`, listed in `agents/catalog.yaml`
+  (as `../spaces/<space-id>.yaml`):
 
   ```yaml
   spaces:
@@ -131,7 +132,7 @@ Copy this into your pull request description:
 
 - [ ] Agent folder `agents/<name>/` with `<name>.yaml` (kind-wrapped under `agents:`)
       + `persona.yaml`
-- [ ] `dashboards/catalog.yaml` lists `../agents/<name>/<name>.yaml`
+- [ ] `agents/catalog.yaml` lists `<name>/<name>.yaml`
 - [ ] All 5 persona fields present and non-empty
 - [ ] Every `dependsOn` key exists in the core catalog (or is added as an ordinary
       catalog entry in this PR)
@@ -162,8 +163,8 @@ repository's `main` branch), so point `cid-cmd` at your local checkout while ite
 ```bash
 pip install -e '.[test]'
 pytest cid/test/python/          # includes catalog-loading and referential-completeness tests
-cid-cmd list-agents --catalog dashboards/catalog.yaml    # your agent appears under its category
-cid-cmd create-agent --agent-id <name> --catalog dashboards/catalog.yaml   # against an account with the dashboards deployed
+cid-cmd list-agents --catalog agents/catalog.yaml    # your agent appears under its category
+cid-cmd create-agent --agent-id <name> --catalog agents/catalog.yaml   # against an account with the dashboards deployed
 ```
 
 You can also iterate without touching the repo at all by shipping the same YAML as an

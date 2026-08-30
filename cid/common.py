@@ -64,6 +64,7 @@ class Cid():
         self._logger = None
         self.catalog_urls = [
             'https://raw.githubusercontent.com/aws-samples/aws-cudos-framework-deployment/main/dashboards/catalog.yaml',
+            'https://raw.githubusercontent.com/aws-samples/aws-cudos-framework-deployment/main/agents/catalog.yaml',
         ]
 
     def aws_login(self):

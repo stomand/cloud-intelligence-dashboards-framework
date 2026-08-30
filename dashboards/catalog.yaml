@@ -24,8 +24,3 @@ Resources:
   - Url: media-services-insights/msih.yaml
   - Url: rls/rls.yaml
   - Url: pca/pca.yaml
-  # Quick Agents and shared Spaces (loaded through the same resource pipeline)
-  - Url: ../spaces/cid-dashboards-space.yaml
-  - Url: ../agents/finops/finops.yaml
-  - Url: ../agents/operations/operations.yaml
-  - Url: ../agents/security/security.yaml

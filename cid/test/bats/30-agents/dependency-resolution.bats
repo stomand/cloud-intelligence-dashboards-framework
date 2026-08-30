@@ -30,7 +30,7 @@ agent_catalog_key="${agent_catalog_key:-finops}"    # catalog key used with --ag
 agent_id="${agent_id:-cid-finops-advisor}"          # deployed agentId of that catalog entry
 # agents/spaces are catalog content; load the repo's local catalog so the tests
 # exercise the checked-out definitions rather than the published main branch
-catalog="${catalog:-$BATS_TEST_DIRNAME/../../../../dashboards/catalog.yaml}"
+catalog="${catalog:-$BATS_TEST_DIRNAME/../../../../agents/catalog.yaml}"
 
 # dependency dashboards of the finops agent (dashboardIds as deployed):
 # required: cudos-v5, cost_intelligence_dashboard, kpi_dashboard; optional: trends-dashboard

@@ -54,7 +54,7 @@ pytest cid/test/python/
 
 Adding a new Quick Agent to the catalog is a content-only contribution: one folder of
 YAML files (`agents/<name>/<name>.yaml` + `persona.yaml`) plus a line in
-`dashboards/catalog.yaml`, and no Python change — the same way dashboards are added.
+`agents/catalog.yaml`, and no Python change — the same way dashboards are added.
 See the [zero-Python agent contribution guide](docs/agents-contributing.md) for the manifest
 shapes, a worked example, the content-only PR template, and the review SLA.
 
