@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import shutil
 import time
 import urllib
 import logging
@@ -15,6 +16,7 @@ from functools import cached_property
 import yaml
 import requests
 from botocore.exceptions import ClientError, NoCredentialsError, CredentialRetrievalError
+from InquirerPy.separator import Separator
 
 
 from cid import utils
@@ -1018,6 +1020,57 @@ class Cid():
             logger.debug(f'ListAgents failed ({exc}). Deployed check indicators will be skipped.')
         return ids
 
+    def _agent_picker_options(self, listing: dict, agents_catalog: dict=None,
+                              deployed_dashboard_arns: dict=None) -> dict:
+        """Build the agent picker choices from a build_agent_listing result.
+
+        Name-first rows grouped under non-selectable category dividers of a
+        uniform width. When ``deployed_dashboard_arns`` is provided, each agent
+        row is followed by a non-selectable dependency annotation block::
+
+            ── Foundational ──────────────────────────────────────────
+            CID FinOps Advisor    ✓ deployed
+                └─ required: ✓ CUDOSv5  ✓ CID  ✓ KPI    optional: ✗ Trends
+
+        Display names lead; the agent id is appended only when two catalog
+        entries share a display name (labels must stay unique).
+        """
+        divider_width = 62
+        annotation_prefix = '    └─ '
+        entries = [entry for group in listing.values() for entry in group]
+        name_width = max((len(entry['name']) for entry in entries), default=0)
+        name_counts = {}
+        for entry in entries:
+            name_counts[entry['name']] = name_counts.get(entry['name'], 0) + 1
+        annotated = deployed_dashboard_arns is not None and agents_catalog is not None
+        if annotated:
+            picker_width = min(shutil.get_terminal_size((120, 24)).columns - 4, 116)
+        options = {}
+        for category_position, (category, group) in enumerate(listing.items()):
+            if category_position:  # blank rows separate categories and agents
+                options[f'_gap_category_{category}'] = Separator(' ')
+            divider = f'── {category} ' + '─' * max(3, divider_width - len(category) - 4)
+            options[category] = Separator(divider)
+            for position, entry in enumerate(group):
+                if annotated and position:
+                    options[f"_gap_{entry['key']}"] = Separator(' ')
+                name = entry['name']
+                if name_counts[name] > 1:  # disambiguate identical display names
+                    name = f"{name} [{entry['agentId']}]"
+                suffix = '✓ deployed' if entry['deployed'] else ''
+                label = f"{name:<{name_width}}    {suffix}".rstrip()
+                options[label] = entry['key']
+                if annotated:
+                    definition = agents_catalog.get(entry['key']) or {}
+                    dependency_lines = self._agent_dependency_lines(
+                        definition, deployed_dashboard_arns,
+                        color=False, indent=' ' * len(annotation_prefix), width=picker_width)
+                    if dependency_lines:  # hang marker on the first line only
+                        dependency_lines[0] = annotation_prefix + dependency_lines[0][len(annotation_prefix):]
+                    for line_number, line in enumerate(dependency_lines):
+                        options[f"_deps_{entry['key']}_{line_number}"] = Separator(line)
+        return options
+
     def _resolve_agent_definition(self, agent_id: str=None) -> tuple:
         """Resolve the agent id (category-grouped picker when absent) and load its definition.
 
@@ -1029,30 +1082,24 @@ class Cid():
             raise CidError('No agents found in the catalog.')
         agent_key = agent_id or get_parameters().get('agent-id')
         if not agent_key:
-            # category-grouped picker: ✓ deployed via ListAgents, hide Deprecated
+            # category-grouped picker: ✓ deployed via ListAgents, hide Deprecated,
+            # dependency annotations per agent
             listing = build_agent_listing(agents_catalog, self._deployed_agent_ids())
-            agent_options = {}
-            for category, entries in listing.items():
-                agent_options[category.upper()] = '[category]'
-                for entry in entries:
-                    agent_options[entry['display']] = entry['key']
-            while True:
-                try:
-                    agent_key = get_parameter(
-                        param_name='agent-id',
-                        message='Please select an agent to create',
-                        choices=agent_options,
-                    )
-                except Exception as exc:
-                    # non-interactive with no value/default: name the missing input
-                    raise CidCritical(
-                        "Required input 'agent-id' has no supplied value, stored default, or "
-                        'fallback in a non-interactive environment. Please provide --agent-id.'
-                    ) from exc
-                if agent_key == '[category]':
-                    unset_parameter('agent-id')
-                    continue
-                break
+            agent_options = self._agent_picker_options(
+                listing, agents_catalog, self._deployed_dashboard_arns_or_none())
+            try:
+                agent_key = get_parameter(
+                    param_name='agent-id',
+                    message='Please select an agent to create',
+                    choices=agent_options,
+                    fuzzy=False,
+                )
+            except Exception as exc:
+                # non-interactive with no value/default: name the missing input
+                raise CidCritical(
+                    "Required input 'agent-id' has no supplied value, stored default, or "
+                    'fallback in a non-interactive environment. Please provide --agent-id.'
+                ) from exc
         # tolerate the deployed agentId as input in addition to the catalog key
         if agent_key not in agents_catalog:
             agent_key = next(
@@ -1278,32 +1325,61 @@ class Cid():
                     knowledge_bases.append(arn)
         return required, optional, datasets, knowledge_bases
 
-    def _preflight_agent_dependencies(self, definition: dict) -> dict:
-        """Read-only dependency pre-flight via ListDashboards — NEVER deploys.
-
-        Resolves each dependency catalog key to its deployed dashboardId and takes that
-        dashboard's ARN from the ListDashboards response (no hand-built ARNs).
-        Zero present dashboards raise the guidance CidError; otherwise
-        the run proceeds with the present set and warns per missing dependency
-. Dataset dependencies are resolved read-only and only
-        present dataset ARNs are attached later.
-        """
-        required, optional, dataset_keys, knowledge_base_arns = self._collect_agent_dependency_keys(definition)
-        # dashboardId -> Arn strictly from the read-only ListDashboards response
+    def _deployed_dashboard_arns_by_id(self) -> dict:
+        """dashboardId -> Arn strictly from the read-only ListDashboards response."""
         deployed_arns_by_id = {}
         for summary in self.qs.list_dashboards():
             if summary.get('DashboardId') and summary.get('Arn'):
                 deployed_arns_by_id[summary['DashboardId']] = summary['Arn']
+        return deployed_arns_by_id
+
+    def _deployed_dashboard_arns_or_none(self):
+        """Tolerant variant for dependency annotations: None when ListDashboards
+        fails, so the caller skips annotations and continues."""
+        try:
+            return self._deployed_dashboard_arns_by_id()
+        except Exception as exc:
+            logger.debug(f'ListDashboards failed ({exc}). Dependency annotations will be skipped.')
+            return None
+
+    def _present_dashboard_keys(self, required: list, optional: list, deployed_arns_by_id: dict) -> tuple:
+        """Resolve dependency catalog keys to deployment presence.
+
+        Returns (present_keys, key_to_dashboard_id). A key missing from the
+        dashboards catalog is treated as missing. Shared by the create-agent
+        pre-flight and the list-agents dependency annotations so both always
+        agree on what is deployed.
+        """
         dashboards_catalog = self.resources.get('dashboards') or {}
         key_to_dashboard_id = {}
-        for key in required + optional:
+        for key in list(required) + list(optional):
             dashboard_id = (dashboards_catalog.get(key) or {}).get('dashboardId')
             if not dashboard_id:
                 logger.warning(f'Dependency dashboard key {key!r} is not in the catalog. Treating it as missing.')
                 continue
             key_to_dashboard_id[key] = dashboard_id
         present_keys = {key for key, dashboard_id in key_to_dashboard_id.items() if dashboard_id in deployed_arns_by_id}
+        return present_keys, key_to_dashboard_id
+
+    def _preflight_agent_dependencies(self, definition: dict) -> dict:
+        """Read-only dependency pre-flight via ListDashboards — NEVER deploys.
+
+        Resolves each dependency catalog key to its deployed dashboardId and takes that
+        dashboard's ARN from the ListDashboards response (no hand-built ARNs).
+        Zero present dashboards raise the guidance CidError; otherwise
+        the run proceeds with the present set and warns per missing dependency.
+        Dataset dependencies are resolved read-only and only
+        present dataset ARNs are attached later.
+        """
+        required, optional, dataset_keys, knowledge_base_arns = self._collect_agent_dependency_keys(definition)
+        deployed_arns_by_id = self._deployed_dashboard_arns_by_id()
+        present_keys, key_to_dashboard_id = self._present_dashboard_keys(required, optional, deployed_arns_by_id)
         classification = classify_dependencies(required, optional, present_keys)
+        summary_lines = self._dependency_summary_lines(required, optional, present_keys)
+        if summary_lines:
+            cid_print(f"Dependencies of agent <BOLD>{definition.get('name') or definition.get('agentId')}<END>:")
+            for summary_line in summary_lines:
+                cid_print(summary_line)
         if not classification['present']:
             raise CidError(
                 'None of the dashboards this agent needs are deployed in this account and region. '
@@ -1519,6 +1595,8 @@ class Cid():
             except Exception as exc:
                 logger.debug(f'DescribeAgent failed for {target_id!r} ({exc}). Marking unknown status.')
                 unknown_ids.add(target_id)  # unknown status; continue with the rest
+        # one read-only ListDashboards call covers all dependency annotations
+        deployed_dashboard_arns = self._deployed_dashboard_arns_or_none()
         # category grouping, ✓ marking, Deprecated hidden, each entry once
         listing = build_agent_listing(agents_catalog, deployed_ids)
         for category, entries in listing.items():
@@ -1531,7 +1609,77 @@ class Cid():
                 provided_by = (agents_catalog.get(entry['key']) or {}).get('providedBy')
                 suffix = f'  (provided by {provided_by})' if provided_by else ''
                 cid_print(f'{display}{suffix}')
+                if deployed_dashboard_arns is not None:
+                    definition = agents_catalog.get(entry['key']) or {}
+                    for dependency_line in self._agent_dependency_lines(definition, deployed_dashboard_arns):
+                        cid_print(dependency_line)
         return listing
+
+    def _agent_dependency_lines(self, definition: dict, deployed_arns_by_id: dict,
+                                color: bool=True, indent: str='     ', width: int=None) -> list:
+        """Dependency summary lines for a listing entry: declared dashboards
+        (agent + its Spaces) with a per-key deployed indicator."""
+        required, optional, _, _ = self._collect_agent_dependency_keys(definition)
+        present_keys, _ = self._present_dashboard_keys(required, optional, deployed_arns_by_id)
+        return self._dependency_summary_lines(required, optional, present_keys,
+                                              color=color, indent=indent, width=width)
+
+    @staticmethod
+    def _dependency_summary_lines(required: list, optional: list, present_keys,
+                                  color: bool=True, indent: str='     ', width: int=None) -> list:
+        """Format declared dashboard dependencies with per-key deployed indicators.
+
+        Returns a list of lines wrapped to the terminal width: everything on one
+        line when it fits, otherwise one line per group (required / optional) with
+        continuation lines aligned under the first key. ``color=False`` yields
+        plain marks for surfaces that render literal text (the InquirerPy picker);
+        the default carries cid_print color tags.
+        """
+        if not required and not optional:
+            return []
+        if width is None:
+            width = min(shutil.get_terminal_size((120, 24)).columns, 120)
+        present = set(present_keys or ())
+
+        def _marked(key):
+            """(rendered text, visible length) — color tags have no visible width."""
+            mark = '✓' if key in present else '✗'
+            plain = f'{mark} {key}'
+            if not color:
+                return plain, len(plain)
+            tag = 'GREEN' if key in present else 'YELLOW'
+            return f'<{tag}>{mark}<END> {key}', len(plain)
+
+        groups = []
+        if required:
+            groups.append(('required:', [_marked(key) for key in required]))
+        if optional:
+            groups.append(('optional:', [_marked(key) for key in optional]))
+
+        segments = []   # (rendered segment, visible length) per group
+        for label, items in groups:
+            text = label + ' ' + '  '.join(item_text for item_text, _ in items)
+            visible = len(label) + 1 + sum(item_len for _, item_len in items) + 2 * (len(items) - 1)
+            segments.append((text, visible))
+        total = len(indent) + sum(visible for _, visible in segments) + 4 * (len(segments) - 1)
+        if total <= width:
+            return [indent + '    '.join(text for text, _ in segments)]
+
+        lines = []
+        for label, items in groups:
+            prefix = indent + label + ' '
+            continuation = ' ' * len(prefix)
+            line_text, line_visible = prefix, len(prefix)
+            for position, (item_text, item_len) in enumerate(items):
+                if position and line_visible + 2 + item_len > width:
+                    lines.append(line_text)
+                    line_text, line_visible = continuation + item_text, len(continuation) + item_len
+                else:
+                    joiner = '  ' if position else ''
+                    line_text += joiner + item_text
+                    line_visible += (2 if position else 0) + item_len
+            lines.append(line_text)
+        return lines
 
     # --- Quick Suite Agent platform: delete-agent (guarded, CID-managed only) ---
 
@@ -1554,28 +1702,20 @@ class Cid():
                 raise CidError('No agents found in the catalog. Please provide --agent-id.')
             # category-grouped picker: ✓ deployed via ListAgents (enumeration only), hide Deprecated
             listing = build_agent_listing(agents_catalog, self._deployed_agent_ids())
-            agent_options = {}
-            for category, entries in listing.items():
-                agent_options[category.upper()] = '[category]'
-                for entry in entries:
-                    agent_options[entry['display']] = entry['key']
-            while True:
-                try:
-                    agent_key = get_parameter(
-                        param_name='agent-id',
-                        message='Please select an agent to delete',
-                        choices=agent_options,
-                    )
-                except Exception as exc:
-                    # non-interactive with no value/default: name the missing input
-                    raise CidCritical(
-                        "Required input 'agent-id' has no supplied value, stored default, or "
-                        'fallback in a non-interactive environment. Please provide --agent-id.'
-                    ) from exc
-                if agent_key == '[category]':
-                    unset_parameter('agent-id')
-                    continue
-                break
+            agent_options = self._agent_picker_options(listing)
+            try:
+                agent_key = get_parameter(
+                    param_name='agent-id',
+                    message='Please select an agent to delete',
+                    choices=agent_options,
+                    fuzzy=False,
+                )
+            except Exception as exc:
+                # non-interactive with no value/default: name the missing input
+                raise CidCritical(
+                    "Required input 'agent-id' has no supplied value, stored default, or "
+                    'fallback in a non-interactive environment. Please provide --agent-id.'
+                ) from exc
         # tolerate either the catalog key or the deployed agentId as input
         definition = agents_catalog.get(agent_key)
         if definition is None:

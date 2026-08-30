@@ -5,6 +5,7 @@ with mocked qs/space/agent helpers.
 """
 
 import io
+import re
 import contextlib
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -20,7 +21,8 @@ from cid.helpers.quicksight.agent_logic import (
 )
 from cid.exceptions import CidError
 from unittest.mock import MagicMock
-from cid.helpers.quicksight.agent_logic import DEPLOYED_MARK
+from cid.helpers.quicksight.agent_logic import DEPLOYED_MARK, build_agent_listing
+from InquirerPy.separator import Separator
 
 
 # ======================================================================
@@ -196,7 +198,7 @@ def make_create_cid(definition, present=(), present_datasets=(), user_role='AUTH
 
     agent = MagicMock(name='agent')
     agent.client.exceptions = excs
-    agent.client.list_agents.return_value = {'AgentsSummaries': []}  # enumeration-only, no NextToken
+    agent.client.list_agents.return_value = {'AgentSummaries': []}  # enumeration-only, no NextToken
     agent.get.return_value = existing_agent
     agent.create_or_update.return_value = {
         'agentId': definition['agentId'], 'arn': AGENT_ARN,
@@ -364,6 +366,22 @@ class TestResourceExistsSuccessPlumbing:
         assert 'Congratulations' in output
         cid_obj.agent.write_provenance.assert_called_once_with(AGENT_ARN, AGENT_ID)
         assert not cid_obj.agent.delete.called
+
+
+class TestPreflightDependencySummary:
+    """The pre-flight prints the same ✓/✗ dependency summary list-agents shows,
+    so create/update surface the full dependency picture, not just warnings."""
+
+    def test_summary_line_shows_present_and_missing_dependencies(self):
+        cid_obj = make_create_cid(
+            make_definition(required=('dash-a', 'dash-b'), optional=('dash-c',)),
+            present=('dash-a',))
+        _, output = run_create(cid_obj, agent_id=AGENT_ID)
+        plain = re.sub(r'\033\[[0-9;]*m', '', output)
+        assert 'Dependencies of agent' in plain
+        assert '✓ dash-a' in plain
+        assert '✗ dash-b' in plain
+        assert 'optional:' in plain and '✗ dash-c' in plain
 
 
 class TestBringYourOwnSpace:
@@ -1178,16 +1196,21 @@ def make_catalog():
     }
 
 
-def make_list_cid(catalog, deployed=(), failing=()):
-    """Build a Cid harness with the given catalog and a mocked agent helper.
+def make_list_cid(catalog, deployed=(), failing=(), dashboards=None, spaces=None,
+                  deployed_dashboard_ids=(), dashboards_failing=False):
+    """Build a Cid harness with the given catalog and mocked agent/qs helpers.
 
     :param catalog: the ``resources['agents']`` mapping
     :param deployed: agent ids for which agent.get returns a non-None describe
     :param failing: agent ids for which agent.get raises (live-query failure)
+    :param dashboards: the ``resources['dashboards']`` mapping (key -> {'dashboardId'})
+    :param spaces: the ``resources['spaces']`` mapping
+    :param deployed_dashboard_ids: dashboardIds returned by the mocked ListDashboards
+    :param dashboards_failing: make the mocked ListDashboards raise
     """
     cid_obj = Cid.__new__(Cid)
     cid_obj.__dict__.clear()
-    cid_obj.resources = {'agents': catalog}
+    cid_obj.resources = {'agents': catalog, 'dashboards': dashboards or {}, 'spaces': spaces or {}}
 
     agent = MagicMock(name='agent')
 
@@ -1200,15 +1223,31 @@ def make_list_cid(catalog, deployed=(), failing=()):
 
     agent.get.side_effect = fake_get
     cid_obj.__dict__['agent'] = agent
+
+    qs = MagicMock(name='qs')
+    if dashboards_failing:
+        qs.list_dashboards.side_effect = RuntimeError('ListDashboards failed')
+    else:
+        qs.list_dashboards.return_value = [
+            {'DashboardId': dashboard_id,
+             'Arn': f'arn:aws:quicksight:us-east-1:123456789012:dashboard/{dashboard_id}'}
+            for dashboard_id in deployed_dashboard_ids
+        ]
+    cid_obj.__dict__['qs'] = qs
     return cid_obj
 
 
 def run_list(cid_obj, **kwargs):
-    """Run the undecorated handler capturing stdout; returns (listing, output)."""
+    """Run the undecorated handler capturing stdout; returns (listing, output).
+
+    ANSI color escapes are stripped from the captured output so tests can
+    assert on plain text like '✓ CUDOSv5'.
+    """
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
         result = list_agents(cid_obj, **kwargs)
-    return result, buffer.getvalue()
+    output = re.sub(r'\033\[[0-9;]*m', '', buffer.getvalue())
+    return result, output
 
 
 class TestCategoryGroupingAndDeployedMarking:
@@ -1474,3 +1513,175 @@ class TestUpdateAgentCommand:
         run_update(cid_obj, agent_id=AGENT_ID)
 
         assert cid_obj.agent.create_or_update.call_args.kwargs.get('sync_spaces') is False
+
+
+class TestListAgentsDependencyAnnotations:
+    """list-agents annotates each entry with its dependsOn dashboards and their
+    deployment state, using the same key-resolution the create-agent pre-flight uses."""
+
+    DASHBOARDS = {
+        'CUDOSv5': {'dashboardId': 'cudos-v5'},
+        'KPI': {'dashboardId': 'kpi_dashboard'},
+        'Trends': {'dashboardId': 'trends-dashboard'},
+    }
+
+    def _catalog(self):
+        return {
+            'finops': {'name': 'FinOps Advisor', 'agentId': 'finops', 'category': 'FinOps',
+                       'dependsOn': {'dashboards': ['CUDOSv5', 'KPI'],
+                                     'optionalDashboards': ['Trends']}},
+        }
+
+    def test_dependency_line_marks_deployed_and_missing(self):
+        cid_obj = make_list_cid(self._catalog(), dashboards=self.DASHBOARDS,
+                                deployed_dashboard_ids=('cudos-v5',))
+        _, output = run_list(cid_obj)
+        assert '✓ CUDOSv5' in output
+        assert '✗ KPI' in output
+        assert 'optional:' in output
+        assert '✗ Trends' in output
+
+    def test_space_declared_dashboards_are_included(self):
+        catalog = {'finops': {'name': 'FinOps Advisor', 'agentId': 'finops', 'category': 'FinOps',
+                              'dependsOn': {'spaces': ['shared'], 'dashboards': ['KPI']}}}
+        spaces = {'shared': {'dependsOn': {'dashboards': ['CUDOSv5']}}}
+        cid_obj = make_list_cid(catalog, dashboards=self.DASHBOARDS, spaces=spaces,
+                                deployed_dashboard_ids=('cudos-v5',))
+        _, output = run_list(cid_obj)
+        assert '✓ CUDOSv5' in output   # merged in from the Space's dependsOn
+        assert '✗ KPI' in output
+
+    def test_listing_continues_without_annotations_when_listdashboards_fails(self):
+        cid_obj = make_list_cid(self._catalog(), dashboards=self.DASHBOARDS,
+                                dashboards_failing=True)
+        listing, output = run_list(cid_obj)
+        assert 'required:' not in output   # annotations skipped
+        assert '[finops] FinOps Advisor' in output   # listing still rendered
+        assert listing
+
+    def test_no_dependency_line_for_agents_without_dependencies(self):
+        cid_obj = make_list_cid({'plain': {'name': 'Plain', 'agentId': 'plain', 'category': 'FinOps'}})
+        _, output = run_list(cid_obj)
+        assert 'required:' not in output
+
+
+class TestAgentPickerOptions:
+    """_agent_picker_options: name-first labels, id only on display-name collision,
+    and non-selectable dependency annotation lines when dashboard state is known."""
+
+    DASHBOARDS = {'CUDOSv5': {'dashboardId': 'cudos-v5'}, 'Trends': {'dashboardId': 'trends-dashboard'}}
+
+    def _make_cid(self, catalog):
+        cid_obj = Cid.__new__(Cid)
+        cid_obj.__dict__.clear()
+        cid_obj.resources = {'agents': catalog, 'dashboards': self.DASHBOARDS, 'spaces': {}}
+        return cid_obj
+
+    def _selectable(self, options):
+        return {label: value for label, value in options.items() if not isinstance(value, Separator)}
+
+    def _separators(self, options):
+        return [str(value) for value in options.values() if isinstance(value, Separator)]
+
+    def test_labels_are_name_first_without_agent_id(self):
+        catalog = {'finops': {'name': 'FinOps Advisor', 'agentId': 'cid-finops', 'category': 'FinOps'}}
+        cid_obj = self._make_cid(catalog)
+        options = cid_obj._agent_picker_options(build_agent_listing(catalog, ()))
+        labels = list(self._selectable(options))
+        assert labels == ['FinOps Advisor']   # no id in the label
+
+    def test_duplicate_display_names_fall_back_to_appending_the_id(self):
+        catalog = {
+            'one': {'name': 'Advisor', 'agentId': 'agent-one', 'category': 'FinOps'},
+            'two': {'name': 'Advisor', 'agentId': 'agent-two', 'category': 'FinOps'},
+        }
+        cid_obj = self._make_cid(catalog)
+        options = cid_obj._agent_picker_options(build_agent_listing(catalog, ()))
+        selectable = self._selectable(options)
+        assert len(selectable) == 2   # no silent collision
+        assert any('agent-one' in label for label in selectable)
+        assert any('agent-two' in label for label in selectable)
+
+    def test_dependency_annotation_lines_are_non_selectable(self):
+        catalog = {'finops': {'name': 'FinOps Advisor', 'agentId': 'cid-finops', 'category': 'FinOps',
+                              'dependsOn': {'dashboards': ['CUDOSv5'], 'optionalDashboards': ['Trends']}}}
+        cid_obj = self._make_cid(catalog)
+        deployed = {'cudos-v5': 'arn:aws:quicksight:us-east-1:123456789012:dashboard/cudos-v5'}
+        options = cid_obj._agent_picker_options(build_agent_listing(catalog, ()), catalog, deployed)
+        separators = self._separators(options)
+        dependency_lines = [line for line in separators if 'required:' in line]
+        assert len(dependency_lines) == 1
+        assert '✓ CUDOSv5' in dependency_lines[0]
+        assert '✗ Trends' in dependency_lines[0]
+        assert '<GREEN>' not in dependency_lines[0]   # picker lines carry no color tags
+        # the agent row itself is still the only selectable entry
+        assert list(self._selectable(options).values()) == ['finops']
+
+    def test_no_dependency_lines_when_dashboard_state_unknown(self):
+        catalog = {'finops': {'name': 'FinOps Advisor', 'agentId': 'cid-finops', 'category': 'FinOps',
+                              'dependsOn': {'dashboards': ['CUDOSv5']}}}
+        cid_obj = self._make_cid(catalog)
+        options = cid_obj._agent_picker_options(build_agent_listing(catalog, ()), catalog, None)
+        assert not [line for line in self._separators(options) if 'required:' in line]
+
+
+class TestDependencySummaryWrapping:
+    """_dependency_summary_lines wraps to the given width: one line when it fits,
+    one group per line when not, key continuation aligned under the first key."""
+
+    def test_single_line_when_it_fits(self):
+        lines = Cid._dependency_summary_lines(['a', 'b'], ['c'], {'a'}, color=False, width=120)
+        assert lines == ['     required: ✓ a  ✗ b    optional: ✗ c']
+
+    def test_groups_split_when_combined_line_does_not_fit(self):
+        lines = Cid._dependency_summary_lines(['dash-one', 'dash-two'], ['dash-three'], set(),
+                                              color=False, width=40)
+        assert len(lines) == 2
+        assert lines[0].startswith('     required: ')
+        assert lines[1].startswith('     optional: ')
+
+    def test_keys_wrap_with_aligned_continuation(self):
+        keys = [f'dashboard-{i}' for i in range(6)]
+        lines = Cid._dependency_summary_lines(keys, [], set(), color=False, width=50)
+        assert len(lines) > 1
+        prefix = '     required: '
+        assert lines[0].startswith(prefix)
+        for continuation in lines[1:]:
+            assert continuation.startswith(' ' * len(prefix))   # aligned under the first key
+            assert len(continuation) <= 50
+
+    def test_color_tags_do_not_count_toward_width(self):
+        plain = Cid._dependency_summary_lines(['a', 'b'], [], {'a'}, color=False, width=30)
+        colored = Cid._dependency_summary_lines(['a', 'b'], [], {'a'}, color=True, width=30)
+        assert len(plain) == len(colored)   # same wrapping decisions
+
+
+class TestDeployedAgentIdsEnumeration:
+    """_deployed_agent_ids extracts ids from the real ListAgents response shape
+    ('AgentSummaries', verified live) and follows NextToken pagination."""
+
+    def _make_cid_with_pages(self, pages):
+        cid_obj = Cid.__new__(Cid)
+        cid_obj.__dict__.clear()
+        cid_obj.base = SimpleNamespace(account_id=ACCOUNT_ID)
+        agent = MagicMock(name='agent')
+        agent.client.list_agents.side_effect = pages
+        cid_obj.__dict__['agent'] = agent
+        return cid_obj
+
+    def test_extracts_ids_from_agent_summaries(self):
+        cid_obj = self._make_cid_with_pages([
+            {'AgentSummaries': [{'AgentId': 'cid-finops-advisor'}, {'AgentId': 'SYSTEM'}]},
+        ])
+        assert cid_obj._deployed_agent_ids() == {'cid-finops-advisor', 'SYSTEM'}
+
+    def test_follows_next_token_pagination(self):
+        cid_obj = self._make_cid_with_pages([
+            {'AgentSummaries': [{'AgentId': 'a1'}], 'NextToken': 'page2'},
+            {'AgentSummaries': [{'AgentId': 'a2'}]},
+        ])
+        assert cid_obj._deployed_agent_ids() == {'a1', 'a2'}
+
+    def test_list_agents_failure_yields_empty_set(self):
+        cid_obj = self._make_cid_with_pages(RuntimeError('AccessDenied'))
+        assert cid_obj._deployed_agent_ids() == set()

@@ -145,7 +145,7 @@ Update Agent Command Options:
 ```
 
 #### List Quick Agents
-List catalog agents grouped by category with live deployment status. Deployed agents are marked with a check indicator; entries in category `Deprecated` are hidden.
+List catalog agents grouped by category with live deployment status. Deployed agents are marked with a check indicator; entries in category `Deprecated` are hidden. Each entry also lists the agent's required and optional dependency dashboards with their deployment state (✓/✗).
 
 ```bash
 cid-cmd list-agents
