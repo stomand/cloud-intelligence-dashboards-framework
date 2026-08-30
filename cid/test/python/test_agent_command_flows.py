@@ -1680,6 +1680,49 @@ class TestDependencySummaryWrapping:
         assert len(plain) == len(colored)   # same wrapping decisions
 
 
+class TestDerivedDatasetKnowledge:
+    """Datasets behind PRESENT dependency dashboards are attached as directly
+    queryable knowledge, without being declared in the agent manifest."""
+
+    def _dataset_calls(self, cid_obj):
+        return [call for call in cid_obj.space.update_resources.call_args_list
+                if call.kwargs.get('resource_type') == 'DATA_SET']
+
+    def test_present_dashboard_datasets_are_attached(self):
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',),
+                                  present_datasets=('ds-derived',))
+        cid_obj.resources['dashboards']['dash-a']['dependsOn'] = {'datasets': ['ds-derived']}
+        cid_obj.resources['datasets']['ds-derived'] = {'data': {'DataSetId': 'ds-derived-id'}}
+        run_create(cid_obj, agent_id=AGENT_ID)
+        dataset_calls = self._dataset_calls(cid_obj)
+        assert len(dataset_calls) == 1
+        assert list(dataset_calls[0].args[1]) == [dataset_arn('ds-derived')]
+
+    def test_absent_dashboard_contributes_no_datasets(self):
+        cid_obj = make_create_cid(make_definition(required=('dash-a', 'dash-b')), present=('dash-a',),
+                                  present_datasets=('ds-of-b',))
+        cid_obj.resources['dashboards']['dash-b']['dependsOn'] = {'datasets': ['ds-of-b']}
+        cid_obj.resources['datasets']['ds-of-b'] = {'data': {'DataSetId': 'ds-of-b-id'}}
+        run_create(cid_obj, agent_id=AGENT_ID)
+        assert not self._dataset_calls(cid_obj)   # dash-b is absent, its datasets stay out
+
+    def test_missing_derived_dataset_is_skipped_without_warning(self):
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        cid_obj.resources['dashboards']['dash-a']['dependsOn'] = {'datasets': ['ds-not-deployed']}
+        _, output = run_create(cid_obj, agent_id=AGENT_ID)
+        assert not self._dataset_calls(cid_obj)
+        assert 'ds-not-deployed' not in output   # quiet skip: no user-facing warning
+
+    def test_explicit_and_derived_datasets_deduplicate(self):
+        cid_obj = make_create_cid(make_definition(required=('dash-a',), datasets=('ds-x',)),
+                                  present=('dash-a',), present_datasets=('ds-x',))
+        cid_obj.resources['dashboards']['dash-a']['dependsOn'] = {'datasets': ['ds-x']}
+        run_create(cid_obj, agent_id=AGENT_ID)
+        dataset_calls = self._dataset_calls(cid_obj)
+        assert len(dataset_calls) == 1
+        assert list(dataset_calls[0].args[1]) == [dataset_arn('ds-x')]   # attached once
+
+
 class TestAdoptionTracking:
     """Agent lifecycle events go to the CID adoption tracker with a unique
     verb (PUT/PATCH/DELETE), the account id, and an agent_id — mirroring the

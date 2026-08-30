@@ -63,6 +63,13 @@ customInstructions: |
   - Trends Dashboard (when present) - Daily and monthly anomaly-detection
     views for spotting when a deviation started
 
+  ## Direct Dataset Queries
+  The attached datasets are directly queryable and go beyond what the
+  dashboard visuals render. During triage, query them directly for
+  incident-window evidence the visuals do not show - for example one
+  resource id's hourly usage during the affected period, or a per-account
+  breakdown of a spiking usage type.
+
   # Enhanced Response Framework
 
   ## When Dashboard Data is Available:

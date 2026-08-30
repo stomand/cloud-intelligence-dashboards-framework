@@ -1451,6 +1451,23 @@ class Cid():
                 f'<YELLOW>Warning:<END> {label} <BOLD>{", ".join(missing_datasets)}<END> not found — '
                 'skipped as knowledge. This command does not create datasets.'
             )
+        # datasets behind the PRESENT dependency dashboards: attached as directly
+        # queryable knowledge beyond what the dashboard visuals expose. Derived from
+        # each dashboard's own catalog dependsOn, so they exist whenever the
+        # dashboard was deployed by cid-cmd; missing ones are skipped quietly.
+        dashboards_catalog = self.resources.get('dashboards') or {}
+        seen_derived = set(dataset_keys)   # explicitly declared keys are already resolved above
+        for dashboard_key in classification['present']:
+            dashboard_datasets = ((dashboards_catalog.get(dashboard_key) or {}).get('dependsOn') or {}).get('datasets') or []
+            for dataset_key in dashboard_datasets:
+                if dataset_key in seen_derived:
+                    continue
+                seen_derived.add(dataset_key)
+                arn = self._find_deployed_dataset_arn(dataset_key)
+                if arn and arn not in present_dataset_arns:
+                    present_dataset_arns.append(arn)
+                elif not arn:
+                    logger.debug(f'Dataset {dataset_key!r} of present dashboard {dashboard_key!r} not found. Skipping as knowledge.')
         return {
             'classification': classification,
             'dashboard_arns': present_dashboard_arns,
