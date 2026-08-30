@@ -1026,10 +1026,12 @@ class Cid():
 
         Name-first rows grouped under non-selectable category dividers of a
         uniform width. When ``deployed_dashboard_arns`` is provided, each agent
-        row is followed by a non-selectable dependency annotation block::
+        row is followed by a non-selectable dependency annotation block. The
+        deployment badge is right-aligned to the divider edge so agent state
+        never blends into the per-dashboard marks::
 
             ── Foundational ──────────────────────────────────────────
-            CID FinOps Advisor    ✓ deployed
+            CID FinOps Advisor                            [DEPLOYED]
                 └─ required: ✓ CUDOSv5  ✓ CID  ✓ KPI    optional: ✗ Trends
 
         Display names lead; the agent id is appended only when two catalog
@@ -1037,8 +1039,8 @@ class Cid():
         """
         divider_width = 62
         annotation_prefix = '    └─ '
+        deployed_badge = '[DEPLOYED]'
         entries = [entry for group in listing.values() for entry in group]
-        name_width = max((len(entry['name']) for entry in entries), default=0)
         name_counts = {}
         for entry in entries:
             name_counts[entry['name']] = name_counts.get(entry['name'], 0) + 1
@@ -1057,8 +1059,11 @@ class Cid():
                 name = entry['name']
                 if name_counts[name] > 1:  # disambiguate identical display names
                     name = f"{name} [{entry['agentId']}]"
-                suffix = '✓ deployed' if entry['deployed'] else ''
-                label = f"{name:<{name_width}}    {suffix}".rstrip()
+                if entry['deployed']:  # badge right-aligned to the divider edge
+                    padding = max(divider_width - len(deployed_badge) - len(name), 2)
+                    label = name + ' ' * padding + deployed_badge
+                else:
+                    label = name
                 options[label] = entry['key']
                 if annotated:
                     definition = agents_catalog.get(entry['key']) or {}
@@ -1082,7 +1087,7 @@ class Cid():
             raise CidError('No agents found in the catalog.')
         agent_key = agent_id or get_parameters().get('agent-id')
         if not agent_key:
-            # category-grouped picker: ✓ deployed via ListAgents, hide Deprecated,
+            # category-grouped picker: DEPLOYED badge via ListAgents, hide Deprecated,
             # dependency annotations per agent
             listing = build_agent_listing(agents_catalog, self._deployed_agent_ids())
             agent_options = self._agent_picker_options(
@@ -1700,7 +1705,7 @@ class Cid():
         if not agent_key:
             if not agents_catalog:
                 raise CidError('No agents found in the catalog. Please provide --agent-id.')
-            # category-grouped picker: ✓ deployed via ListAgents (enumeration only), hide Deprecated
+            # category-grouped picker: DEPLOYED badge via ListAgents (enumeration only), hide Deprecated
             listing = build_agent_listing(agents_catalog, self._deployed_agent_ids())
             agent_options = self._agent_picker_options(listing)
             try:
