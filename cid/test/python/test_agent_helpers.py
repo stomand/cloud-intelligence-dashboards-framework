@@ -352,7 +352,7 @@ class TestDescribeBasedExistence:
         helper, client = make_agent_helper()
         # Simulate an agent invisible to ListAgents (e.g. FAILED state) but
         # fully describable by id.
-        client.list_agents.return_value = {'AgentsSummaries': []}
+        client.list_agents.return_value = {'AgentSummaries': []}
         client.describe_agent.return_value = {'Agent': {'AgentId': 'my-agent', 'AgentStatus': 'FAILED'}}
 
         agent = helper.get('my-agent')

@@ -1005,8 +1005,7 @@ class Cid():
             parameters = {'AwsAccountId': self.base.account_id}
             while True:
                 response = self.agent.client.list_agents(**parameters)
-                summaries = (response.get('AgentsSummaries') or response.get('AgentSummaryList')
-                             or response.get('Agents') or response.get('agents') or [])
+                summaries = response.get('AgentSummaries') or response.get('agentSummaries') or []
                 for summary in summaries:
                     an_id = summary.get('AgentId') or summary.get('agentId')
                     if an_id:
