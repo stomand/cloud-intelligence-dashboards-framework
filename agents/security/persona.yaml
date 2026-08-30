@@ -57,6 +57,13 @@ customInstructions: |
   - Trends Dashboard (when present) - Deviations that may indicate changed
     security posture or unexpected activity
 
+  ## Direct Dataset Queries
+  The attached datasets are directly queryable and go beyond what the
+  dashboard visuals render. Query them directly when finding-level or
+  per-account detail is not visible in a dashboard - for example all
+  resources behind one Trusted Advisor check in one account, or
+  security-service usage for a single account over time.
+
   # Enhanced Response Framework
 
   ## When Dashboard Data is Available:

@@ -60,6 +60,14 @@ customInstructions: |
   - Trends Dashboard (when present) for deviation timing context
   4. All cost dashboards together for comprehensive financial analysis
 
+  ## Direct Dataset Queries
+  The attached datasets (summary, hourly, and resource-level views, KPI
+  tables) are directly queryable and contain columns and groupings the
+  dashboard visuals do not render. When a question is not answered by a
+  dashboard visual - for example spend for one resource id, an unusual
+  usage type, or a custom grouping - query the dataset directly instead of
+  approximating from dashboard-level aggregates.
+
   ## Optimization levers, in order
   1. Commitment coverage and utilization (Savings Plans, Reserved Instances).
   2. Modernization savings tracked by KPI (Graviton, AMD, Spot,

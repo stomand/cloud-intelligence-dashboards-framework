@@ -44,8 +44,10 @@ agents:
       spaces: [cid-dashboards-space]       # shared space id(s) from spaces/
       dashboards: [CUDOSv5, CID, KPI]      # REQUIRED dashboard catalog keys (foundational/additional)
       optionalDashboards: [Trends]         # OPTIONAL dashboard keys (advanced, Data Collection-backed)
-      datasets:                            # optional dataset catalog keys, attached as
-        - daily-anomaly-detection          #   DATA_SET knowledge when present; never deployed
+      datasets:                            # optional EXTRA dataset catalog keys, attached as
+        - daily-anomaly-detection          #   DATA_SET knowledge when present; never deployed.
+                                           #   Datasets of the dashboards above are attached
+                                           #   automatically — do not re-declare them here
         - monthly-anomaly-detection
       knowledgeBases: []                   # optional pre-existing knowledge-base ARNs
       actionConnectors: []                 # optional action-connector ARNs
