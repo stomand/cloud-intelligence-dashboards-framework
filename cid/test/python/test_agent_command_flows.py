@@ -384,6 +384,27 @@ class TestPreflightDependencySummary:
         assert 'optional:' in plain and '✗ dash-c' in plain
 
 
+class TestProgressOutput:
+    """The apply flow prints a headline plus indented outcome facts (Space /
+    Knowledge / Agent / Status), matching the tool's section-and-facts style."""
+
+    def test_create_prints_headline_and_outcome_facts(self):
+        cid_obj = make_create_cid(make_definition(required=('dash-a',)), present=('dash-a',))
+        _, output = run_create(cid_obj, agent_id=AGENT_ID)
+        plain = re.sub(r'\033\[[0-9;]*m', '', output)
+        assert 'Creating agent Test Agent...' in plain
+        assert '\tKnowledge: 1 dashboard linked' in plain
+        assert f'\tAgent: created ({AGENT_ID})' in plain
+        assert '\tStatus: waiting to become ACTIVE' in plain
+        assert '\tStatus: ACTIVE (' in plain
+
+    def test_no_wait_lines_for_preview_lifecycle(self):
+        cid_obj = make_create_cid(
+            make_definition(required=('dash-a',), lifecycle='PREVIEW'), present=('dash-a',))
+        _, output = run_create(cid_obj, agent_id=AGENT_ID)
+        assert 'waiting to become ACTIVE' not in output
+
+
 class TestBringYourOwnSpace:
     """: --space select/create and SearchSpaces resolution."""
 

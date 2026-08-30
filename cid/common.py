@@ -895,6 +895,8 @@ class Cid():
         repair = bool(get_parameters().get('repair'))
         sync_spaces = bool(get_parameters().get('sync-spaces'))
         access_denied = self.space.client.exceptions.AccessDeniedException
+        verb = 'Updating' if mode == 'update' else 'Creating'
+        cid_print(f"\n{verb} agent <BOLD>{definition.get('name') or target_agent_id}<END>...")
         try:
             # 8. resolve the target Space
             space_id, space_arn = self._resolve_agent_space(definition, space_name, principal_arn)
@@ -913,6 +915,12 @@ class Cid():
             # dataset knowledge: attach only PRESENT dataset ARNs, never create
             if dependencies['dataset_arns']:
                 self.space.update_resources(space_id, dependencies['dataset_arns'], resource_type='DATA_SET')
+            dashboards_count = len(dependencies['dashboard_arns'])
+            datasets_count = len(dependencies['dataset_arns'])
+            knowledge = f"{dashboards_count} dashboard{'s' if dashboards_count != 1 else ''}"
+            if datasets_count:
+                knowledge += f", {datasets_count} dataset{'s' if datasets_count != 1 else ''}"
+            cid_print(f'\tKnowledge: {knowledge} linked')
             # 10. optional pre-existing knowledge bases; never create a KB
             self._attach_knowledge_bases(space_id, dependencies['knowledge_base_arns'])
             # 11. create-or-update (existence and provenance were gated in step 6b)
@@ -934,6 +942,8 @@ class Cid():
             if result.get('action') == 'created' and result.get('arn'):
                 # dual provenance write: tag (tolerated failure) + Description marker
                 self.agent.write_provenance(result['arn'], target_agent_id)
+            action_word = {'created': 'created', 'updated': 'updated', 'unchanged': 'up to date'}.get(result.get('action'), 'ready')
+            cid_print(f'\tAgent: {action_word} ({target_agent_id})')
             # --repair (update-agent): detach and re-attach the Space links so the
             # service rewrites them. Recovers an agent whose Space shows as
             # unavailable although it describes as healthy.
@@ -944,7 +954,13 @@ class Cid():
             self.agent.grant_owner(target_agent_id, principal_arn)
             # 13. PUBLISHED lifecycle: wait for ACTIVE; fail fast on FAILED
             if str(definition.get('lifecycle') or '').upper() == 'PUBLISHED':
+                changed = result.get('action') != 'unchanged'
+                if changed:
+                    cid_print('\tStatus: waiting to become ACTIVE')
+                wait_started = time.time()
                 self.agent.wait_active(target_agent_id)
+                cid_print(f'\tStatus: ACTIVE ({int(time.time() - wait_started)}s)' if changed
+                          else '\tStatus: ACTIVE')
         except access_denied as exc:
             operation = getattr(exc, 'operation_name', None) or 'a Quick Suite generative-AI operation'
             raise CidCritical(
@@ -1516,7 +1532,7 @@ class Cid():
             description = space_definition.get('description')
             if self.space.get(space_id) is not None:
                 return self._reuse_existing_space(space_id, principal_arn, name=name, description=description)
-        cid_print(f'Creating Space <BOLD>{space_id}<END>')
+        cid_print(f'\tSpace: creating <BOLD>{space_id}<END>')
         space_arn = self.space.create_or_update(space_id, name, description=description)
         self.space.write_provenance(space_arn, space_id)   # dual provenance write
         self.space.grant_owner(space_id, principal_arn)    # 16-action owner set
@@ -1534,15 +1550,14 @@ class Cid():
                      or f'arn:{self.base.partition}:quicksight:{self.base.region}:{self.base.account_id}:space/{space_id}')
         current_description = str(space.get('description') or space.get('Description') or '')
         if is_cid_managed(self._get_resource_tags(space_arn), current_description):
-            cid_print(f'Reusing CID-managed Space <BOLD>{space_id}<END>')
+            cid_print(f'\tSpace: reusing <BOLD>{space_id}<END>')
             self.space.create_or_update(space_id, name or space.get('name') or space.get('Name') or space_id, description=description)
             self.space.write_provenance(space_arn, space_id)
             self.space.grant_owner(space_id, principal_arn)
         else:
             cid_print(
-                f'Reusing the existing Space <BOLD>{space_id}<END> additively: only this agent\'s '
-                'resources will be added; pre-existing Space resources, name, description, tags and '
-                'permissions are left untouched.'
+                f'\tSpace: reusing <BOLD>{space_id}<END> additively (not CID-managed: existing '
+                'resources, name, description, tags and permissions are left untouched)'
             )
         return space_id, space_arn
 
