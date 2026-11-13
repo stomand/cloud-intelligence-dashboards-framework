@@ -145,12 +145,14 @@ def test_repo_agents_catalog_lists_launch_agents_and_shared_space():
                      'agents/resilience/resilience.yaml',
                      'agents/support/support.yaml',
                      'agents/health/health.yaml',
+                     'agents/marketplace/marketplace.yaml',
                      'spaces/cid-finops-space.yaml',
                      'spaces/cid-operations-space.yaml',
                      'spaces/cid-security-space.yaml',
                      'spaces/cid-resilience-space.yaml',
                      'spaces/cid-support-space.yaml',
-                     'spaces/cid-health-space.yaml'):
+                     'spaces/cid-health-space.yaml',
+                     'spaces/cid-marketplace-space.yaml'):
         assert expected in urls, f'{expected} is not listed in agentic/catalog.yaml'
     for url in urls:
         referenced = (REPO_ROOT / 'agentic' / url).resolve()
@@ -203,7 +205,7 @@ DASHBOARDS_CATALOG_PATH = REPO_ROOT / 'dashboards' / 'catalog.yaml'
 AGENTS_CATALOG_PATH = REPO_ROOT / 'agentic' / 'catalog.yaml'
 
 
-LAUNCH_AGENT_IDS = ('operations', 'finops', 'security', 'resilience', 'support', 'health')
+LAUNCH_AGENT_IDS = ('operations', 'finops', 'security', 'resilience', 'support', 'health', 'marketplace')
 
 
 PERSONA_FIELDS = ('identity', 'customInstructions', 'tone', 'outputStyle', 'responseLength')

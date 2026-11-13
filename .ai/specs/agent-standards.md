@@ -68,6 +68,7 @@ Rules:
 | `resilience` | `cid-resilience-space` | Single points of failure, RTO/RPO, fault tolerance |
 | `support` | `cid-support-space` | Support case summaries and patterns |
 | `health` | `cid-health-space` | AWS Health event prioritization |
+| `marketplace` | `cid-marketplace-space` | AWS Marketplace spend, agreements and license grants |
 
 The Operations Advisor follows the CID generative AI guide (<https://docs.aws.amazon.com/guidance/latest/cloud-intelligence-dashboards/generative-ai.html>); the specialists go deeper in one domain.
 

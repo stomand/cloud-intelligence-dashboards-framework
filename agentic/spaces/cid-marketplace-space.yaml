@@ -1,0 +1,22 @@
+# Space for the CID Marketplace Advisor. Loaded via agentic/catalog.yaml.
+# A Space owns the knowledge (dashboards, datasets, knowledge bases); agents reference it.
+spaces:
+  cid-marketplace-space:
+    name: CID Marketplace Space
+    description: >-
+      AWS Marketplace knowledge from the Cloud Intelligence Dashboards: spend by
+      seller, product, account and invoice, license grants, agreements, payment
+      schedules and legal terms, and the Marketplace share of total AWS spend.
+    dependsOn:
+      dashboards:
+        - aws-marketplace          # AWS Marketplace Single Pane of Glass (SPG)
+        - cudos-v5                 # CUDOS: Marketplace share of total spend (Executive tabs)
+      datasets:
+        # aws-marketplace
+        - marketplace_view
+        - marketplace_licenses_grants_view
+        - agreements
+        - terms
+        # cudos-v5 (Executive tabs)
+        - summary_view
+      knowledgeBases: []
