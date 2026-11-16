@@ -5,8 +5,9 @@ spaces:
     name: CID Marketplace Space
     description: >-
       AWS Marketplace knowledge from the Cloud Intelligence Dashboards: spend by
-      seller, product, account and invoice, license grants, agreements, payment
-      schedules and legal terms, and the Marketplace share of total AWS spend.
+      seller of record, product, account and invoice, the Marketplace share of
+      total AWS spend, and license grants, agreements, payment schedules and legal
+      terms collected by CID Data Collection.
     dependsOn:
       dashboards:
         - aws-marketplace          # AWS Marketplace Single Pane of Glass (SPG)

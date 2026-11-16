@@ -321,8 +321,8 @@ def test_launch_agent_persona_is_complete(agent_id):
 
 
 def test_launch_agents_and_shared_space_register_via_catalog():
-    """The three launch agents and the shared space register through the
-    catalog pipeline."""
+    """The launch agents and the shared spaces register through the catalog
+    pipeline."""
     for agent_id in LAUNCH_AGENT_IDS:
         assert agent_id in RESOURCES.get('agents', {}), f'Launch agent {agent_id!r} did not register'
     assert {'cid-finops-space', 'cid-operations-space'} <= set(RESOURCES.get('spaces', {}))

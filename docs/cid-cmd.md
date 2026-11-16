@@ -433,7 +433,7 @@ Seven agents ship with the core catalog (run `cid-cmd list-agents` to see them):
 | `resilience` | CID Resilience Advisor | `cid-resilience-space` | ResilienceVue, Trusted Advisor Organizational View (Fault Tolerance, Service Limits), CUDOS (single-AZ RDS and VPC endpoints, AWS Backup, Capacity Reservations), Health Events, AWS Config Resource Compliance Dashboard (`cid-crcd`) |
 | `support` | CID Support Cases Analyst | `cid-support-space` | AWS Support Cases Radar |
 | `health` | CID Health Events Analyst | `cid-health-space` | Health Events Dashboard |
-| `marketplace` | CID Marketplace Advisor | `cid-marketplace-space` | AWS Marketplace Single Pane of Glass (SPG), CUDOS (Executive: Billing Summary and Trends) |
+| `marketplace` | CID Marketplace Advisor | `cid-marketplace-space` | AWS Marketplace Single Pane of Glass (SPG), CUDOS (Executive: Billing Summary and Trends). The SPG Granted and Entitled Licenses and Marketplace Agreements tabs need [CID Data Collection](https://docs.aws.amazon.com/guidance/latest/cloud-intelligence-dashboards/marketplace-dashboard.html) (Marketplace Licensing Collection, Marketplace Data Collection Module) |
 
 An agent can be created as soon as one of its dashboards is deployed; each additional deployed dashboard adds knowledge on the next `create-agent` or `update-agent` run.
 

@@ -4,23 +4,23 @@ agents:
   marketplace:
     name: CID Marketplace Advisor
     agentId: cid-marketplace-advisor
-    summary: "AWS Marketplace spend, agreements, renewals and licenses"   # one line shown in the agent picker and list-agents
+    summary: "AWS Marketplace spend, agreements, end dates and license grants"   # one line shown in the agent picker and list-agents
     description: >-
       AWS Marketplace procurement advisor over the AWS Marketplace Single Pane of
       Glass (SPG) and the CUDOS Executive tabs. Analyzes Marketplace spend by
-      seller, product and account, agreements and renewals, payment schedules and
-      license grants.
+      seller of record, product and account, and, with CID Data Collection,
+      agreements, end dates, payment schedules and license grants.
     dependsOn:
       spaces: [cid-marketplace-space]
       actionConnectors: []
     personaFile: persona.yaml
     starterPrompts:
       - "What did we spend on AWS Marketplace last month by seller and product?"
-      - "Which Marketplace agreements and licenses expire in the next 90 days?"
+      - "Which Marketplace products are billed in the most AWS accounts?"
       - "Which accounts drove the change in our Marketplace spend last month?"
     welcomeMessage: >-
       Hi, I'm the CID Marketplace Advisor. Ask me about AWS Marketplace spend by
-      seller, product and account, agreements and renewals, payment schedules, or
-      license grants across your organization.
+      seller, product and account, or, with CID Data Collection, agreements ending
+      soon, payment schedules and license grants across your organization.
     lifecycle: PUBLISHED
     versions: { version: "v1.0.0" }
